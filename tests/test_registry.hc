@@ -147,3 +147,42 @@ test "GET /api/v1/packages/\{name\} for an unknown package is a 404" {
   let r = test_get(build_routes(db), "/api/v1/packages/nonesuch")
   assert(route_response_status(r) == 404)
 }
+
+// ── GET /api/v1/packages/\{name\}/\{version\} ───────────────────────────────────
+
+test "GET /api/v1/packages/\{name\}/\{version\} returns single version metadata" {
+  let db = fresh_seeded()
+  let r = test_get(build_routes(db), "/api/v1/packages/json/0.2.0")
+  assert(route_response_status(r) == 200)
+  let body = route_response_body(r)
+  assert(contains(body, "\"version\": \"0.2.0\""))
+  assert(contains(body, "\"checksum\": \"sha256:bbb\""))
+  assert(contains(body, "\"download\": \"https://pkg.hica.dev/api/v1/packages/json/0.2.0/download\""))
+}
+
+test "GET /api/v1/packages/\{name\}/\{version\} for an unknown version is a 404" {
+  let db = fresh_seeded()
+  let r = test_get(build_routes(db), "/api/v1/packages/json/9.9.9")
+  assert(route_response_status(r) == 404)
+}
+
+// ── GET /api/v1/packages/\{name\}/\{version\}/download ───────────────────────────
+
+test "download redirects to the tarball location" {
+  let db = fresh_seeded()
+  let r = test_get(build_routes(db), "/api/v1/packages/json/0.2.0/download")
+  assert(route_response_status(r) == 302)
+  assert(contains(route_response_headers(r), "https://pkg.hica.dev/json/json-0.2.0.tar.gz"))
+}
+
+test "a yanked version is still downloadable" {
+  let db = fresh_seeded()
+  let r = test_get(build_routes(db), "/api/v1/packages/json/0.3.0/download")
+  assert(route_response_status(r) == 302)
+}
+
+test "download of an unknown version is a 404" {
+  let db = fresh_seeded()
+  let r = test_get(build_routes(db), "/api/v1/packages/json/9.9.9/download")
+  assert(route_response_status(r) == 404)
+}

@@ -9,6 +9,8 @@
 //   GET  /api/v1/index                          list all packages + latest
 //   GET  /api/v1/search?q=<term>                substring search
 //   GET  /api/v1/packages/{name}               package detail + versions
+//   GET  /api/v1/packages/{name}/{version}     single version metadata
+//   GET  /api/v1/packages/{name}/{version}/download   redirect to the tarball
 //   PUT  /api/v1/packages/{name}/{version}     publish (multipart)
 
 import "web"
@@ -18,14 +20,34 @@ import "sqlite"
 import "./db"
 
 // ---------------------------------------------------------------------------
+// URL builders
+// ---------------------------------------------------------------------------
+// String concatenation only lowers to Koka's `++` when the operands have a
+// known string type, so keep URL building inside `: string` helpers (same
+// reason schema_sql in db.hc is annotated).
+
+// Public download endpoint for a version (this server).
+pub fun download_url(name: string, ver: string) : string {
+  "https://pkg.hica.dev/api/v1/packages/" + name + "/" + ver + "/download"
+}
+
+// Canonical tarball location on the static host. Interim source until the
+// publish flow persists tarball bytes into a real store (see handle_publish).
+pub fun tarball_url(name: string, ver: string) : string {
+  "https://pkg.hica.dev/" + name + "/" + name + "-" + ver + ".tar.gz"
+}
+
+// ---------------------------------------------------------------------------
 // JSON row encoders
 // ---------------------------------------------------------------------------
 
-pub fun version_json(r: Row) : Json {
+// Encode a (version, checksum, yanked) row plus the download URL for `name`.
+pub fun version_json(name: string, r: Row) : Json {
   JObject([
     ("version",  JString(sopt(row_str(r, 0)))),
     ("checksum", JString(sopt(row_str(r, 1)))),
-    ("yanked",   JBool(iopt(row_int(r, 2)) != 0))
+    ("yanked",   JBool(iopt(row_int(r, 2)) != 0)),
+    ("download", JString(download_url(name, sopt(row_str(r, 0)))))
   ])
 }
 
@@ -110,7 +132,7 @@ pub fun handle_get_package(db, req) {
                 "WHERE p.name = ? ORDER BY v.published_at DESC, v.id DESC", [param(name)]) {
           Err(e)   => error_response(e.message),
           Ok(vres) => {
-            let versions = map(vres.rows, version_json)
+            let versions = map(vres.rows, (r) => version_json(name, r))
             json_response(json_emit(JObject([
               ("name",        JString(sopt(row_str(prow, 0)))),
               ("description", JString(sopt(row_str(prow, 1)))),
@@ -163,6 +185,43 @@ pub fun handle_publish(db, req) {
   }
 }
 
+// Single version metadata. 404 if the package or version is unknown.
+pub fun handle_get_version(db, req) {
+  let name = path_str(req, "name")
+  let ver  = path_str(req, "version")
+  match sqlite_query_p(db,
+          "SELECT v.version, v.checksum, v.yanked FROM versions v " +
+          "JOIN packages p ON p.id = v.package_id " +
+          "WHERE p.name = ? AND v.version = ?", [param(name), param(ver)]) {
+    Err(e)  => error_response(e.message),
+    Ok(res) => match res.rows {
+      []      => not_found_response(),
+      [r, .._] => json_response(json_emit(version_json(name, r)))
+    }
+  }
+}
+
+// Download a version's tarball. Yanked versions stay downloadable so existing
+// builds remain reproducible (yank only hides from resolution). 404 if the
+// version is unknown.
+// TODO: increment a per-version download counter (needs a downloads table) and
+// stream stored tarball bytes directly once publish persists them; until then
+// redirect to the canonical tarball location.
+pub fun handle_download(db, req) {
+  let name = path_str(req, "name")
+  let ver  = path_str(req, "version")
+  match sqlite_query_p(db,
+          "SELECT v.id FROM versions v " +
+          "JOIN packages p ON p.id = v.package_id " +
+          "WHERE p.name = ? AND v.version = ?", [param(name), param(ver)]) {
+    Err(e)  => error_response(e.message),
+    Ok(res) => match res.rows {
+      []     => not_found_response(),
+      [_, .._] => redirect(tarball_url(name, ver))
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Route table
 // ---------------------------------------------------------------------------
@@ -171,10 +230,12 @@ pub fun handle_publish(db, req) {
 // server (main.hc) and the in-process tests (tests/test_registry.hc).
 pub fun build_routes(db) {
   [
-    get("/health",                              handle_health),
-    get("/api/v1/index",                        (req) => handle_index(db, req)),
-    get("/api/v1/search",                       (req) => handle_search(db, req)),
-    get("/api/v1/packages/\{name\}",              (req) => handle_get_package(db, req)),
-    put("/api/v1/packages/\{name\}/\{version\}",    (req) => handle_publish(db, req))
+    get("/health",                                       handle_health),
+    get("/api/v1/index",                                 (req) => handle_index(db, req)),
+    get("/api/v1/search",                                (req) => handle_search(db, req)),
+    get("/api/v1/packages/\{name\}",                       (req) => handle_get_package(db, req)),
+    get("/api/v1/packages/\{name\}/\{version\}/download",    (req) => handle_download(db, req)),
+    get("/api/v1/packages/\{name\}/\{version\}",             (req) => handle_get_version(db, req)),
+    put("/api/v1/packages/\{name\}/\{version\}",             (req) => handle_publish(db, req))
   ]
 }
