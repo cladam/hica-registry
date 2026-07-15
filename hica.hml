@@ -6,6 +6,9 @@
 }
 
 @dependencies {
+    json: "latest"
+    sqlite: "latest"
+    http: "latest"
 }
 
 @description {
