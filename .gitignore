@@ -1,3 +1,16 @@
+.koka
+.hica
+
+examples/*
+!examples/*.hc
+
+src/*
+!src/*.hc
+!src/sqlite_ffi.kk
+!src/sqlite-inline.c
+
+tests/*
+!tests/*.hc
 
 # tbdflow intent log (local-only, never committed)
 .tbdflow-intent.json
