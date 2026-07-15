@@ -1,0 +1,16 @@
+@project {
+    name: "hica-registry"
+    version: "0.1.0"
+    license: "MIT"
+    entry: "src/main.hc"
+}
+
+@dependencies {
+}
+
+@description {
+    summary: "Registry for hica libraries"
+    author: "cladam"
+    homepage: "https://www.hica.dev"
+    repository: "https://github.com/cladam/hica-registry"
+}
