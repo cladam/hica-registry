@@ -207,27 +207,47 @@ pub fun handle_publish(db, req) {
                           "checksum mismatch: declared " + claimed +
                           " but computed " + actual_sum)
                       } else {
-                        // 8. Upsert package, insert version ─────────────────
+                        // 8. Upsert package, bootstrap ownership, insert version
                         let _ = sqlite_exec_p(db,
                           "INSERT OR IGNORE INTO packages(name, description, repository, license) " +
                           "VALUES (?, ?, ?, ?)",
                           [param(name), param(desc), param(repo), param(lic)])
-                        match sqlite_exec_p(db,
-                            "INSERT INTO versions(package_id, version, checksum, tarball_path, published_by) " +
-                            "VALUES ((SELECT id FROM packages WHERE name = ?), ?, ?, ?, ?)",
-                            [param(name), param(ver), param(actual_sum),
-                             param(tpath), param(show(user_id))]) {
-                          Err(e) => status_response(409,
-                            "could not publish " + name + "@" + ver +
-                            " (already exists?): " + e.message),
-                          Ok(_) => json_response(json_emit(JObject([
-                            ("ok",            JBool(true)),
-                            ("package",       JString(name)),
-                            ("version",       JString(ver)),
-                            ("checksum",      JString(actual_sum)),
-                            ("tarball_path",  JString(tpath)),
-                            ("tarball_bytes", JInt(str_length(tar.bytes)))
-                          ])))
+                        // First publisher becomes the initial owner (INSERT OR IGNORE
+                        // is a no-op if ownership already exists for this package).
+                        let _ = sqlite_exec_p(db,
+                          "INSERT OR IGNORE INTO package_owners(package_id, user_id) " +
+                          "SELECT p.id, ? FROM packages p " +
+                          "WHERE p.name = ? " +
+                          "AND NOT EXISTS (SELECT 1 FROM package_owners po WHERE po.package_id = p.id)",
+                          [param(show(user_id)), param(name)])
+                        // For an existing package, verify the caller is an owner.
+                        match sqlite_query_p(db,
+                                "SELECT 1 FROM package_owners po " +
+                                "JOIN packages p ON p.id = po.package_id " +
+                                "WHERE p.name = ? AND po.user_id = ?",
+                                [param(name), param(show(user_id))]) {
+                          Err(e) => error_response(e.message),
+                          Ok(ores) => match ores.rows {
+                            [] => forbidden("not an owner of '" + name + "'"),
+                            [_, .._] =>
+                              match sqlite_exec_p(db,
+                                  "INSERT INTO versions(package_id, version, checksum, tarball_path, published_by) " +
+                                  "VALUES ((SELECT id FROM packages WHERE name = ?), ?, ?, ?, ?)",
+                                  [param(name), param(ver), param(actual_sum),
+                                   param(tpath), param(show(user_id))]) {
+                                Err(e) => status_response(409,
+                                  "could not publish " + name + "@" + ver +
+                                  " (already exists?): " + e.message),
+                                Ok(_) => json_response(json_emit(JObject([
+                                  ("ok",            JBool(true)),
+                                  ("package",       JString(name)),
+                                  ("version",       JString(ver)),
+                                  ("checksum",      JString(actual_sum)),
+                                  ("tarball_path",  JString(tpath)),
+                                  ("tarball_bytes", JInt(str_length(tar.bytes)))
+                                ])))
+                              }
+                          }
                         }
                       }
                   }
@@ -352,6 +372,156 @@ pub fun handle_unyank(db, req) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Owners API
+// ---------------------------------------------------------------------------
+
+// GET /api/v1/packages/{name}/owners — list all owners of a package (public).
+// Returns 404 if the package is unknown.
+pub fun handle_list_owners(db, req) {
+  let name = path_str(req, "name")
+  match sqlite_query_p(db,
+          "SELECT id FROM packages WHERE name = ?", [param(name)]) {
+    Err(e) => error_response(e.message),
+    Ok(pres) => match pres.rows {
+      [] => not_found_response(),
+      [_, .._] =>
+        match sqlite_query_p(db,
+                "SELECT u.handle FROM users u " +
+                "JOIN package_owners o ON o.user_id = u.id " +
+                "JOIN packages p ON p.id = o.package_id " +
+                "WHERE p.name = ? ORDER BY u.handle", [param(name)]) {
+          Err(e) => error_response(e.message),
+          Ok(res) => {
+            let owners = map(res.rows, (r) => JObject([("handle", JString(sopt(row_str(r, 0))))]))
+            json_response(json_emit(JObject([("owners", JArray(owners))])))
+          }
+        }
+    }
+  }
+}
+
+// PUT /api/v1/packages/{name}/owners — add an owner (authenticated; must be owner).
+// Body: JSON object with "handle" key naming an existing user.
+pub fun handle_add_owner(db, req) {
+  let name = path_str(req, "name")
+  match check_auth(db, req) {
+    None => unauthorized("valid Bearer token required"),
+    Some(uid) =>
+      match sqlite_query_p(db,
+              "SELECT id FROM packages WHERE name = ?", [param(name)]) {
+        Err(e) => error_response(e.message),
+        Ok(pres) => match pres.rows {
+          [] => not_found_response(),
+          [prow, .._] => {
+            let pkg_id = iopt(row_int(prow, 0))
+            match sqlite_query_p(db,
+                    "SELECT 1 FROM package_owners WHERE package_id = ? AND user_id = ?",
+                    [param(show(pkg_id)), param(show(uid))]) {
+              Err(e) => error_response(e.message),
+              Ok(ores) => match ores.rows {
+                [] => forbidden("not an owner of '" + name + "'"),
+                [_, .._] => {
+                  let bdoc   = json_ok(parse_json(req_body(req)))
+                  let handle = str_or(bdoc |> at("handle"), "")
+                  if handle == "" {
+                    status_response(400, "missing 'handle' in request body")
+                  } else {
+                    match sqlite_query_p(db,
+                            "SELECT id FROM users WHERE handle = ?", [param(handle)]) {
+                      Err(e) => error_response(e.message),
+                      Ok(ures) => match ures.rows {
+                        [] => status_response(400, "user '" + handle + "' does not exist"),
+                        [urow, .._] => {
+                          let new_uid = iopt(row_int(urow, 0))
+                          let _ = sqlite_exec_p(db,
+                            "INSERT OR IGNORE INTO package_owners(package_id, user_id) VALUES (?, ?)",
+                            [param(show(pkg_id)), param(show(new_uid))])
+                          json_response(json_emit(JObject([
+                            ("ok",      JBool(true)),
+                            ("package", JString(name)),
+                            ("handle",  JString(handle))
+                          ])))
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+  }
+}
+
+// DELETE /api/v1/packages/{name}/owners — remove an owner (authenticated; must be owner).
+// Body: JSON object with "handle" key. Cannot remove the last owner.
+pub fun handle_remove_owner(db, req) {
+  let name = path_str(req, "name")
+  match check_auth(db, req) {
+    None => unauthorized("valid Bearer token required"),
+    Some(uid) =>
+      match sqlite_query_p(db,
+              "SELECT id FROM packages WHERE name = ?", [param(name)]) {
+        Err(e) => error_response(e.message),
+        Ok(pres) => match pres.rows {
+          [] => not_found_response(),
+          [prow, .._] => {
+            let pkg_id = iopt(row_int(prow, 0))
+            match sqlite_query_p(db,
+                    "SELECT 1 FROM package_owners WHERE package_id = ? AND user_id = ?",
+                    [param(show(pkg_id)), param(show(uid))]) {
+              Err(e) => error_response(e.message),
+              Ok(ores) => match ores.rows {
+                [] => forbidden("not an owner of '" + name + "'"),
+                [_, .._] => {
+                  let bdoc   = json_ok(parse_json(req_body(req)))
+                  let handle = str_or(bdoc |> at("handle"), "")
+                  if handle == "" {
+                    status_response(400, "missing 'handle' in request body")
+                  } else {
+                    match sqlite_query_p(db,
+                            "SELECT id FROM users WHERE handle = ?", [param(handle)]) {
+                      Err(e) => error_response(e.message),
+                      Ok(ures) => match ures.rows {
+                        [] => status_response(400, "user '" + handle + "' does not exist"),
+                        [urow, .._] => {
+                          let rem_uid = iopt(row_int(urow, 0))
+                          match sqlite_query_p(db,
+                                  "SELECT COUNT(*) FROM package_owners WHERE package_id = ?",
+                                  [param(show(pkg_id))]) {
+                            Err(e) => error_response(e.message),
+                            Ok(cres) => match cres.rows {
+                              [crow, .._] =>
+                                if iopt(row_int(crow, 0)) <= 1 {
+                                  status_response(400, "cannot remove the last owner of '" + name + "'")
+                                } else {
+                                  let _ = sqlite_exec_p(db,
+                                    "DELETE FROM package_owners WHERE package_id = ? AND user_id = ?",
+                                    [param(show(pkg_id)), param(show(rem_uid))])
+                                  json_response(json_emit(JObject([
+                                    ("ok",      JBool(true)),
+                                    ("package", JString(name)),
+                                    ("handle",  JString(handle))
+                                  ])))
+                                },
+                              _ => error_response("unexpected db state")
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+  }
+}
+
 // Build the registry's route table over an open database handle. Shared by the
 // server (main.hc) and the in-process tests.
 pub fun build_routes(db) {
@@ -360,6 +530,9 @@ pub fun build_routes(db) {
     get("/api/v1/index",                                        (req) => handle_index(db, req)),
     get("/api/v1/search",                                       (req) => handle_search(db, req)),
     get("/api/v1/packages/\{name\}",                             (req) => handle_get_package(db, req)),
+    get("/api/v1/packages/\{name\}/owners",                      (req) => handle_list_owners(db, req)),
+    put("/api/v1/packages/\{name\}/owners",                      (req) => handle_add_owner(db, req)),
+    delete("/api/v1/packages/\{name\}/owners",                   (req) => handle_remove_owner(db, req)),
     get("/api/v1/packages/\{name\}/\{version\}/download",        (req) => handle_download(db, req)),
     get("/api/v1/packages/\{name\}/\{version\}",                 (req) => handle_get_version(db, req)),
     put("/api/v1/packages/\{name\}/\{version\}",                 (req) => handle_publish(db, req)),

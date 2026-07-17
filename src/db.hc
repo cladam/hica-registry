@@ -56,6 +56,11 @@ pub fun schema_sql() : string {
   "CREATE TABLE IF NOT EXISTS downloads (" +
   "  version_id INTEGER PRIMARY KEY REFERENCES versions(id)," +
   "  count      INTEGER NOT NULL DEFAULT 0" +
+  ");" +
+  "CREATE TABLE IF NOT EXISTS package_owners (" +
+  "  package_id INTEGER NOT NULL REFERENCES packages(id)," +
+  "  user_id    INTEGER NOT NULL REFERENCES users(id)," +
+  "  PRIMARY KEY (package_id, user_id)" +
   ");"
 }
 
@@ -85,6 +90,12 @@ pub fun upgrade_db(db) {
     "CREATE TABLE IF NOT EXISTS downloads (" +
     "  version_id INTEGER PRIMARY KEY REFERENCES versions(id)," +
     "  count      INTEGER NOT NULL DEFAULT 0" +
+    ")")
+  let _ = sqlite_exec(db,
+    "CREATE TABLE IF NOT EXISTS package_owners (" +
+    "  package_id INTEGER NOT NULL REFERENCES packages(id)," +
+    "  user_id    INTEGER NOT NULL REFERENCES users(id)," +
+    "  PRIMARY KEY (package_id, user_id)" +
     ")")
   println("schema upgrade done")
 }

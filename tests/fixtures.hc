@@ -48,3 +48,18 @@ pub fun fresh_with_auth() {
   seed_admin_token(db)
   db
 }
+
+// Like fresh_with_auth, but also seeds admin as owner of json and sqlite.
+// Use for tests that exercise the owners endpoints.
+pub fun fresh_with_owners() {
+  let db = fresh_with_auth()
+  let _ = sqlite_exec(db,
+    "INSERT OR IGNORE INTO package_owners(package_id, user_id) " +
+    "VALUES ((SELECT id FROM packages WHERE name = 'json'), " +
+    "        (SELECT id FROM users WHERE handle = 'admin'))")
+  let _ = sqlite_exec(db,
+    "INSERT OR IGNORE INTO package_owners(package_id, user_id) " +
+    "VALUES ((SELECT id FROM packages WHERE name = 'sqlite'), " +
+    "        (SELECT id FROM users WHERE handle = 'admin'))")
+  db
+}

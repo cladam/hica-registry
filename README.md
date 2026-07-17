@@ -7,9 +7,9 @@ A server-side package registry for [hica](https://www.hica.dev), inspired by
 The registry is both a real service and a flagship dogfooding project: if hica
 can host its own package registry, it can build real web services.
 
-> **Status:** Phase 3 in progress — download counter, yank, and unyank are
-> complete; 42 tests pass. The owners API is the remaining Phase 3 item.
-> The CLI (`hica publish` / `hica login`) remains open in the compiler repo.
+> **Status:** Phase 3 complete — download counter, yank, unyank, and the
+> owners API are all done; 59 tests pass. The CLI (`hica publish` / `hica login`)
+> remains open in the compiler repo.
 > See [docs/hica-registry-server.md](docs/hica-registry-server.md) for the full
 > design document.
 
@@ -91,7 +91,7 @@ download):
 | **0** | RFC + schema agreed | ✅ |
 | **1** | Read API (`packages`, `download`, `search`, `index`) + one-time seed from the existing static files; retire FTP | ✅ |
 | **2** | Authenticated multipart publish (`hica publish` / `hica login`); move `publish-pkg.yml` off FTP | 🟡 server done; CLI open |
-| **3** | Yank / unyank, owners, download counts surfaced in `pkg info` | 🟡 download counter + yank/unyank done; owners open |
+| **3** | Yank / unyank, owners, download counts surfaced in `pkg info` | ✅ |
 | **4** | (Optional) static web UI over the JSON API; semver ranges | — |
 
 ## Development
