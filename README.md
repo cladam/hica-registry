@@ -7,9 +7,9 @@ A server-side package registry for [hica](https://www.hica.dev), inspired by
 The registry is both a real service and a flagship dogfooding project: if hica
 can host its own package registry, it can build real web services.
 
-> **Status:** Phase 2 server-side complete — authenticated multipart publish
-> works end-to-end; 26 tests pass. The remaining Phase 2 item is the CLI
-> (`hica publish` / `hica login`) in the compiler repo.
+> **Status:** Phase 3 in progress — download counter, yank, and unyank are
+> complete; 42 tests pass. The owners API is the remaining Phase 3 item.
+> The CLI (`hica publish` / `hica login`) remains open in the compiler repo.
 > See [docs/hica-registry-server.md](docs/hica-registry-server.md) for the full
 > design document.
 
@@ -76,7 +76,7 @@ download):
 |---|---|---|---|
 | `GET` | `/api/v1/packages/{name}` | — | Package detail: metadata, `latest`, every version |
 | `GET` | `/api/v1/packages/{name}/{version}` | — | Single version metadata |
-| `GET` | `/api/v1/packages/{name}/{version}/download` | — | 302 redirect to the tarball (download counter: Phase 3) |
+| `GET` | `/api/v1/packages/{name}/{version}/download` | — | 302 redirect to the tarball; increments per-version download counter |
 | `GET` | `/api/v1/search?q=<term>&limit=<n>` | — | Full-text search |
 | `GET` | `/api/v1/index` | — | Lightweight catalogue for offline seeding |
 | `PUT` | `/api/v1/packages/{name}/{version}` | token | Publish a version (multipart) |
@@ -91,7 +91,7 @@ download):
 | **0** | RFC + schema agreed | ✅ |
 | **1** | Read API (`packages`, `download`, `search`, `index`) + one-time seed from the existing static files; retire FTP | ✅ |
 | **2** | Authenticated multipart publish (`hica publish` / `hica login`); move `publish-pkg.yml` off FTP | 🟡 server done; CLI open |
-| **3** | Yank / unyank, owners, download counts surfaced in `pkg info` | — |
+| **3** | Yank / unyank, owners, download counts surfaced in `pkg info` | 🟡 download counter + yank/unyank done; owners open |
 | **4** | (Optional) static web UI over the JSON API; semver ranges | — |
 
 ## Development
@@ -102,7 +102,13 @@ hica run     # compile and run
 hica fmt     # format according to hica style guide
 hica check   # type-check without emitting
 hica clean   # remove generated files
-hica test tests/test_registry.hc   # run the test suite (26 tests)
+
+# test suites (42 tests total)
+hica test tests/test_db.hc        # db helpers, schema, auth primitives (10)
+hica test tests/test_read.hc      # read-only GET routes              (13)
+hica test tests/test_publish.hc   # authenticated publish              ( 5)
+hica test tests/test_downloads.hc # download counter                   ( 4)
+hica test tests/test_yank.hc      # yank / unyank                     (10)
 ```
 
 Dependencies (`json`, `sqlite`, `http`) are declared in [hica.hml](hica.hml).
