@@ -47,10 +47,68 @@ test "GET /api/v1/search matches on description text" {
   assert(contains(route_response_body(r), "\"name\": \"sqlite\""))
 }
 
-test "GET /api/v1/search without q returns 400" {
+test "GET /api/v1/search without q returns all packages" {
   let db = fresh_seeded()
   let r = test_get(build_routes(db), "/api/v1/search")
-  assert(route_response_status(r) == 400)
+  assert(route_response_status(r) == 200)
+  let body = route_response_body(r)
+  assert(contains(body, "\"name\": \"json\""))
+  assert(contains(body, "\"name\": \"sqlite\""))
+}
+
+test "GET /api/v1/search response includes total, page, per_page, sort fields" {
+  let db = fresh_seeded()
+  let body = route_response_body(test_get(build_routes(db), "/api/v1/search?q="))
+  assert(contains(body, "\"total\":"))
+  assert(contains(body, "\"page\":"))
+  assert(contains(body, "\"per_page\":"))
+  assert(contains(body, "\"sort\":"))
+}
+
+test "GET /api/v1/search total reflects number of matching packages" {
+  let db = fresh_seeded()
+  let body = route_response_body(test_get(build_routes(db), "/api/v1/search?q="))
+  assert(contains(body, "\"total\": 2"))
+}
+
+test "GET /api/v1/search per_page=1 returns exactly one result" {
+  let db = fresh_seeded()
+  let r = test_get(build_routes(db), "/api/v1/search?q=&per_page=1")
+  assert(route_response_status(r) == 200)
+  let body = route_response_body(r)
+  assert(contains(body, "\"per_page\": 1"))
+  assert(contains(body, "\"total\": 2"))
+}
+
+test "GET /api/v1/search page=2 per_page=1 returns the second package" {
+  let db = fresh_seeded()
+  let body = route_response_body(test_get(build_routes(db), "/api/v1/search?q=&sort=name&per_page=1&page=2"))
+  assert(contains(body, "\"name\": \"sqlite\""))
+}
+
+test "GET /api/v1/search sort=name returns results in alphabetical order" {
+  let db = fresh_seeded()
+  let body = route_response_body(test_get(build_routes(db), "/api/v1/search?q=&sort=name"))
+  assert(contains(body, "\"sort\": \"name\""))
+  assert(contains(body, "\"name\": \"json\""))
+}
+
+test "GET /api/v1/search sort=newest returns 200 with sort field" {
+  let db = fresh_seeded()
+  let body = route_response_body(test_get(build_routes(db), "/api/v1/search?q=&sort=newest"))
+  assert(contains(body, "\"sort\": \"newest\""))
+}
+
+test "GET /api/v1/search sort=downloads returns 200 with sort field" {
+  let db = fresh_seeded()
+  let body = route_response_body(test_get(build_routes(db), "/api/v1/search?q=&sort=downloads"))
+  assert(contains(body, "\"sort\": \"downloads\""))
+}
+
+test "GET /api/v1/search per_page capped at 100" {
+  let db = fresh_seeded()
+  let body = route_response_body(test_get(build_routes(db), "/api/v1/search?q=&per_page=999"))
+  assert(contains(body, "\"per_page\": 100"))
 }
 
 // ── GET /api/v1/packages/{name} ───────────────────────────────────────────────
