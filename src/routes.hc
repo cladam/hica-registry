@@ -12,6 +12,8 @@
 //   GET  /api/v1/packages/{name}/{version}     single version metadata
 //   GET  /api/v1/packages/{name}/{version}/download   redirect to the tarball
 //   PUT  /api/v1/packages/{name}/{version}     publish (multipart)
+//   DELETE /api/v1/packages/{name}/{version}/yank     hide a version from resolution
+//   PUT  /api/v1/packages/{name}/{version}/unyank     restore a yanked version
 
 import "web"
 import "multipart"
@@ -285,16 +287,83 @@ pub fun handle_download(db, req) {
 // Route table
 // ---------------------------------------------------------------------------
 
+// Yank a version — hide it from resolution (authenticated). 404 if unknown.
+// Yanked versions remain downloadable so existing builds stay reproducible.
+pub fun handle_yank(db, req) {
+  let name = path_str(req, "name")
+  let ver  = path_str(req, "version")
+  match check_auth(db, req) {
+    None => unauthorized("valid Bearer token required"),
+    Some(_) =>
+      match sqlite_query_p(db,
+              "SELECT v.id FROM versions v " +
+              "JOIN packages p ON p.id = v.package_id " +
+              "WHERE p.name = ? AND v.version = ?", [param(name), param(ver)]) {
+        Err(e)   => error_response(e.message),
+        Ok(res)  => match res.rows {
+          [] => not_found_response(),
+          [_, .._] =>
+            match sqlite_exec_p(db,
+                "UPDATE versions SET yanked = 1 " +
+                "WHERE package_id = (SELECT id FROM packages WHERE name = ?) " +
+                "AND version = ?", [param(name), param(ver)]) {
+              Err(e) => error_response(e.message),
+              Ok(_)  => json_response(json_emit(JObject([
+                ("ok",      JBool(true)),
+                ("package", JString(name)),
+                ("version", JString(ver)),
+                ("yanked",  JBool(true))
+              ])))
+            }
+        }
+      }
+  }
+}
+
+// Unyank a version — restore it to resolution (authenticated). 404 if unknown.
+pub fun handle_unyank(db, req) {
+  let name = path_str(req, "name")
+  let ver  = path_str(req, "version")
+  match check_auth(db, req) {
+    None => unauthorized("valid Bearer token required"),
+    Some(_) =>
+      match sqlite_query_p(db,
+              "SELECT v.id FROM versions v " +
+              "JOIN packages p ON p.id = v.package_id " +
+              "WHERE p.name = ? AND v.version = ?", [param(name), param(ver)]) {
+        Err(e)   => error_response(e.message),
+        Ok(res)  => match res.rows {
+          [] => not_found_response(),
+          [_, .._] =>
+            match sqlite_exec_p(db,
+                "UPDATE versions SET yanked = 0 " +
+                "WHERE package_id = (SELECT id FROM packages WHERE name = ?) " +
+                "AND version = ?", [param(name), param(ver)]) {
+              Err(e) => error_response(e.message),
+              Ok(_)  => json_response(json_emit(JObject([
+                ("ok",      JBool(true)),
+                ("package", JString(name)),
+                ("version", JString(ver)),
+                ("yanked",  JBool(false))
+              ])))
+            }
+        }
+      }
+  }
+}
+
 // Build the registry's route table over an open database handle. Shared by the
-// server (main.hc) and the in-process tests (tests/test_registry.hc).
+// server (main.hc) and the in-process tests.
 pub fun build_routes(db) {
   [
-    get("/health",                                       handle_health),
-    get("/api/v1/index",                                 (req) => handle_index(db, req)),
-    get("/api/v1/search",                                (req) => handle_search(db, req)),
-    get("/api/v1/packages/\{name\}",                       (req) => handle_get_package(db, req)),
-    get("/api/v1/packages/\{name\}/\{version\}/download",    (req) => handle_download(db, req)),
-    get("/api/v1/packages/\{name\}/\{version\}",             (req) => handle_get_version(db, req)),
-    put("/api/v1/packages/\{name\}/\{version\}",             (req) => handle_publish(db, req))
+    get("/health",                                              handle_health),
+    get("/api/v1/index",                                        (req) => handle_index(db, req)),
+    get("/api/v1/search",                                       (req) => handle_search(db, req)),
+    get("/api/v1/packages/\{name\}",                             (req) => handle_get_package(db, req)),
+    get("/api/v1/packages/\{name\}/\{version\}/download",        (req) => handle_download(db, req)),
+    get("/api/v1/packages/\{name\}/\{version\}",                 (req) => handle_get_version(db, req)),
+    put("/api/v1/packages/\{name\}/\{version\}",                 (req) => handle_publish(db, req)),
+    delete("/api/v1/packages/\{name\}/\{version\}/yank",         (req) => handle_yank(db, req)),
+    put("/api/v1/packages/\{name\}/\{version\}/unyank",          (req) => handle_unyank(db, req))
   ]
 }
