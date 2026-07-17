@@ -7,8 +7,10 @@ A server-side package registry for [hica](https://www.hica.dev), inspired by
 The registry is both a real service and a flagship dogfooding project: if hica
 can host its own package registry, it can build real web services.
 
-> **Status:** Exploration / RFC → early implementation. See
-> [docs/hica-registry-server.md](docs/hica-registry-server.md) for the full
+> **Status:** Phase 2 server-side complete — authenticated multipart publish
+> works end-to-end; 26 tests pass. The remaining Phase 2 item is the CLI
+> (`hica publish` / `hica login`) in the compiler repo.
+> See [docs/hica-registry-server.md](docs/hica-registry-server.md) for the full
 > design document.
 
 ## Why
@@ -74,7 +76,7 @@ download):
 |---|---|---|---|
 | `GET` | `/api/v1/packages/{name}` | — | Package detail: metadata, `latest`, every version |
 | `GET` | `/api/v1/packages/{name}/{version}` | — | Single version metadata |
-| `GET` | `/api/v1/packages/{name}/{version}/download` | — | Stream the tarball (bumps count) |
+| `GET` | `/api/v1/packages/{name}/{version}/download` | — | 302 redirect to the tarball (download counter: Phase 3) |
 | `GET` | `/api/v1/search?q=<term>&limit=<n>` | — | Full-text search |
 | `GET` | `/api/v1/index` | — | Lightweight catalogue for offline seeding |
 | `PUT` | `/api/v1/packages/{name}/{version}` | token | Publish a version (multipart) |
@@ -84,13 +86,13 @@ download):
 
 ## Roadmap
 
-| Phase | Deliverable |
-|---|---|
-| **0** | RFC + schema agreed |
-| **1** | Read API (`packages`, `download`, `search`, `index`) + one-time seed from the existing static files; retire FTP |
-| **2** | Authenticated multipart publish (`hica publish` / `hica login`); move `publish-pkg.yml` off FTP |
-| **3** | Yank / unyank, owners, download counts surfaced in `pkg info` |
-| **4** | (Optional) static web UI over the JSON API; semver ranges |
+| Phase | Deliverable | Status |
+|---|---|---|
+| **0** | RFC + schema agreed | ✅ |
+| **1** | Read API (`packages`, `download`, `search`, `index`) + one-time seed from the existing static files; retire FTP | ✅ |
+| **2** | Authenticated multipart publish (`hica publish` / `hica login`); move `publish-pkg.yml` off FTP | 🟡 server done; CLI open |
+| **3** | Yank / unyank, owners, download counts surfaced in `pkg info` | — |
+| **4** | (Optional) static web UI over the JSON API; semver ranges | — |
 
 ## Development
 
@@ -100,9 +102,39 @@ hica run     # compile and run
 hica fmt     # format according to hica style guide
 hica check   # type-check without emitting
 hica clean   # remove generated files
+hica test tests/test_registry.hc   # run the test suite (26 tests)
 ```
 
 Dependencies (`json`, `sqlite`, `http`) are declared in [hica.hml](hica.hml).
+
+### Running the server
+
+```sh
+hica run src/main.hc
+```
+
+On first boot the server creates `registry.db`, applies the schema, and inserts
+a dev admin user with token `hica-admin-CHANGEME`. **Rotate this token before
+any production deployment.**
+
+Tarballs are written to `./tarballs/<name>/` by default. Override with:
+
+```sh
+HICA_TARBALL_DIR=/var/hica/tarballs hica run src/main.hc
+```
+
+### Publishing a package (curl)
+
+```sh
+curl -X PUT http://localhost:8080/api/v1/packages/mylib/1.0.0 \
+     -H "Authorization: Bearer hica-admin-CHANGEME" \
+     -F 'metadata={"description":"My library","license":"MIT"}' \
+     -F tarball=@mylib-1.0.0.tar.gz
+```
+
+The server recomputes the SHA-256 of the received tarball and stores only the
+hash — the declared `checksum` field in metadata is optional but verified if
+present. The raw token is never stored; only its SHA-256 reaches the database.
 
 ## Documents
 
