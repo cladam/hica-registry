@@ -18,6 +18,7 @@ import "multipart"
 import "json"
 import "sqlite"
 import "./db"
+import "./auth"
 
 // ---------------------------------------------------------------------------
 // URL builders
@@ -147,41 +148,91 @@ pub fun handle_get_package(db, req) {
   }
 }
 
-// Publish a version. Multipart: a JSON `metadata` part and a binary `tarball`
-// part. TODO: authenticate the caller, verify sha256(tarball) == checksum, and
-// persist the tarball bytes to a store.
+// Publish a version.
+//
+// Authentication:  `Authorization: Bearer <token>` required; 401 on failure.
+// Input:           Multipart with a JSON `metadata` part and a binary `tarball` part.
+// Checksum:        sha256 of the uploaded tarball is always recomputed on disk.
+//                  If the client declares a `checksum` in metadata it must match;
+//                  the verified digest is what gets stored regardless.
+// Persistence:     Tarball is written to HICA_TARBALL_DIR/<name>/<name>-<ver>.tar.gz
+//                  (default dir: ./tarballs).  The directory is created if absent.
 pub fun handle_publish(db, req) {
   let name = path_str(req, "name")
   let ver  = path_str(req, "version")
-  match req_part(req, "metadata") {
-    None => status_response(400, "missing 'metadata' part"),
-    Some(meta) => match req_part(req, "tarball") {
-      None => status_response(400, "missing 'tarball' part"),
-      Some(tar) => {
-        let mdoc = json_ok(parse_json(meta.bytes))
-        let desc = str_or(mdoc |> at("description"), "")
-        let repo = str_or(mdoc |> at("repository"), "")
-        let lic  = str_or(mdoc |> at("license"), "")
-        let sum  = str_or(mdoc |> at("checksum"), "")
-        let _ = sqlite_exec_p(db,
-                  "INSERT OR IGNORE INTO packages(name, description, repository, license) " +
-                  "VALUES (?, ?, ?, ?)",
-                  [param(name), param(desc), param(repo), param(lic)])
-        match sqlite_exec_p(db,
-                "INSERT INTO versions(package_id, version, checksum) " +
-                "VALUES ((SELECT id FROM packages WHERE name = ?), ?, ?)",
-                [param(name), param(ver), param(sum)]) {
-          Err(e) => status_response(409,
-            "could not publish " + name + "@" + ver + " (already exists?): " + e.message),
-          Ok(_) => json_response(json_emit(JObject([
-            ("ok",            JBool(true)),
-            ("package",       JString(name)),
-            ("version",       JString(ver)),
-            ("tarball_bytes", JInt(length(tar.bytes)))
-          ])))
+  // 1. Authenticate ─────────────────────────────────────────────────────────
+  match check_auth(db, req) {
+    None => unauthorized("valid Bearer token required"),
+    Some(user_id) =>
+      // 2. Reject obviously dangerous name/version strings ──────────────────
+      // (The router already strips '/' from path segments; guard against '..'
+      // to prevent directory traversal in the tarball store.)
+      if contains(name, "..") || contains(ver, "..") {
+        status_response(400, "invalid package name or version")
+      } else {
+        // 3. Parse multipart parts ──────────────────────────────────────────
+        match req_part(req, "metadata") {
+          None => status_response(400, "missing 'metadata' part"),
+          Some(meta) => match req_part(req, "tarball") {
+            None => status_response(400, "missing 'tarball' part"),
+            Some(tar) => {
+              let mdoc    = json_ok(parse_json(meta.bytes))
+              let desc    = str_or(mdoc |> at("description"), "")
+              let repo    = str_or(mdoc |> at("repository"), "")
+              let lic     = str_or(mdoc |> at("license"), "")
+              let claimed = str_or(mdoc |> at("checksum"), "")
+              // 4. Determine tarball store dir ───────────────────────────────
+              let tdir  = match get_env("HICA_TARBALL_DIR") {
+                Some(d) => d,
+                None    => "./tarballs"
+              }
+              let pkg_dir = tdir + "/" + name
+              let tpath   = pkg_dir + "/" + name + "-" + ver + ".tar.gz"
+              // 5. Write tarball to disk ─────────────────────────────────────
+              match exec("mkdir -p " + pkg_dir) {
+                Err(e) => status_response(500, "could not create tarball dir: " + e),
+                Ok(_) => {
+                  write_file(tpath, tar.bytes)
+                  // 6. Verify sha256 ─────────────────────────────────────────
+                  match sha256_file(tpath) {
+                    Err(e) => status_response(500, "sha256 failed: " + e),
+                    Ok(actual_sum) =>
+                      // 7. Compare to declared checksum (if client sent one) ─
+                      if claimed != "" && claimed != actual_sum {
+                        status_response(400,
+                          "checksum mismatch: declared " + claimed +
+                          " but computed " + actual_sum)
+                      } else {
+                        // 8. Upsert package, insert version ─────────────────
+                        let _ = sqlite_exec_p(db,
+                          "INSERT OR IGNORE INTO packages(name, description, repository, license) " +
+                          "VALUES (?, ?, ?, ?)",
+                          [param(name), param(desc), param(repo), param(lic)])
+                        match sqlite_exec_p(db,
+                            "INSERT INTO versions(package_id, version, checksum, tarball_path, published_by) " +
+                            "VALUES ((SELECT id FROM packages WHERE name = ?), ?, ?, ?, ?)",
+                            [param(name), param(ver), param(actual_sum),
+                             param(tpath), param(show(user_id))]) {
+                          Err(e) => status_response(409,
+                            "could not publish " + name + "@" + ver +
+                            " (already exists?): " + e.message),
+                          Ok(_) => json_response(json_emit(JObject([
+                            ("ok",            JBool(true)),
+                            ("package",       JString(name)),
+                            ("version",       JString(ver)),
+                            ("checksum",      JString(actual_sum)),
+                            ("tarball_path",  JString(tpath)),
+                            ("tarball_bytes", JInt(str_length(tar.bytes)))
+                          ])))
+                        }
+                      }
+                  }
+                }
+              }
+            }
+          }
         }
       }
-    }
   }
 }
 
