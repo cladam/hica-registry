@@ -11,6 +11,7 @@
 
 import "../src/routes"
 import "../src/db"
+import "../src/auth"
 import "sqlite"
 import "testclient"
 
@@ -185,4 +186,108 @@ test "download of an unknown version is a 404" {
   let db = fresh_seeded()
   let r = test_get(build_routes(db), "/api/v1/packages/json/9.9.9/download")
   assert(route_response_status(r) == 404)
+}
+
+// ── auth.hc — sha256_str ─────────────────────────────────────────────────────
+
+// SHA-256("hello") = 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+// Both sha256sum (Linux) and shasum -a 256 (macOS) produce this value.
+test "sha256_str returns prefixed hex for a known input" {
+  match sha256_str("hello") {
+    Err(e) => assert(false),
+    Ok(h)  => assert(h == "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824")
+  }
+}
+
+// ── db.hc Phase 2 — upgrade_db + seed_admin_token ────────────────────────────
+
+test "upgrade_db is idempotent on a fresh schema" {
+  let db = unwrap(sqlite_open(":memory:"))
+  init_db(db)
+  upgrade_db(db)
+  upgrade_db(db)  // second run silently ignores "duplicate column name" errors
+  let r = sqlite_query(db, "SELECT COUNT(*) FROM versions")
+  assert(is_ok(r))
+}
+
+test "seed_admin_token inserts exactly one user and one token" {
+  let db = unwrap(sqlite_open(":memory:"))
+  init_db(db)
+  seed_admin_token(db)
+  match sqlite_query(db, "SELECT COUNT(*) FROM users") {
+    Err(_)  => assert(false),
+    Ok(res) => match res.rows {
+      [row, ..] => assert(iopt(row_int(row, 0)) == 1),
+      _         => assert(false)
+    }
+  }
+}
+
+test "seed_admin_token is idempotent — a second call does not add rows" {
+  let db = unwrap(sqlite_open(":memory:"))
+  init_db(db)
+  seed_admin_token(db)
+  seed_admin_token(db)
+  match sqlite_query(db, "SELECT COUNT(*) FROM tokens") {
+    Err(_)  => assert(false),
+    Ok(res) => match res.rows {
+      [row, ..] => assert(iopt(row_int(row, 0)) == 1),
+      _         => assert(false)
+    }
+  }
+}
+
+// ── PUT /api/v1/packages/{name}/{version} — auth + traversal guard ────────────
+//
+// Multipart parts are parsed by libmicrohttpd's post-processor (live server
+// only), so the full publish happy path is exercised via curl. In-process we
+// can cover every early-return branch: 401 (no auth, bad token) and 400
+// (traversal guard, missing metadata part that fires on any non-multipart PUT).
+
+fun fresh_with_auth() {
+  let db = fresh_seeded()
+  seed_admin_token(db)
+  db
+}
+
+test "PUT without auth header is 401" {
+  let db = fresh_with_auth()
+  let r = test_request(build_routes(db), "PUT",
+            "/api/v1/packages/mylib/1.0.0", "", "")
+  assert(route_response_status(r) == 401)
+}
+
+test "PUT with a wrong Bearer token is 401" {
+  let db = fresh_with_auth()
+  let r = test_request(build_routes(db), "PUT",
+            "/api/v1/packages/mylib/1.0.0",
+            "Authorization: Bearer wrong-token\n", "")
+  assert(route_response_status(r) == 401)
+}
+
+test "PUT with the correct token passes auth and reaches multipart parsing (400 no metadata)" {
+  let db = fresh_with_auth()
+  let r = test_request(build_routes(db), "PUT",
+            "/api/v1/packages/mylib/1.0.0",
+            "Authorization: Bearer hica-admin-CHANGEME\n", "")
+  assert(route_response_status(r) == 400)
+  assert(contains(route_response_body(r), "metadata"))
+}
+
+test "PUT with .. in the package name is rejected as 400 before touching disk" {
+  let db = fresh_with_auth()
+  let r = test_request(build_routes(db), "PUT",
+            "/api/v1/packages/my..lib/1.0.0",
+            "Authorization: Bearer hica-admin-CHANGEME\n", "")
+  assert(route_response_status(r) == 400)
+  assert(contains(route_response_body(r), "invalid"))
+}
+
+test "PUT with .. in the version is rejected as 400 before touching disk" {
+  let db = fresh_with_auth()
+  let r = test_request(build_routes(db), "PUT",
+            "/api/v1/packages/mylib/1..0",
+            "Authorization: Bearer hica-admin-CHANGEME\n", "")
+  assert(route_response_status(r) == 400)
+  assert(contains(route_response_body(r), "invalid"))
 }
