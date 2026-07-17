@@ -291,3 +291,38 @@ test "PUT with .. in the version is rejected as 400 before touching disk" {
   assert(route_response_status(r) == 400)
   assert(contains(route_response_body(r), "invalid"))
 }
+
+// ── Download counter ─────────────────────────────────────────────────────────
+
+test "fresh version has downloads=0 in version detail" {
+  let db = fresh_seeded()
+  let r = test_get(build_routes(db), "/api/v1/packages/json/0.2.0")
+  let body = route_response_body(r)
+  assert(contains(body, "\"downloads\": 0"))
+}
+
+test "download increments the counter to 1" {
+  let db = fresh_seeded()
+  let _ = test_get(build_routes(db), "/api/v1/packages/json/0.2.0/download")
+  let r = test_get(build_routes(db), "/api/v1/packages/json/0.2.0")
+  let body = route_response_body(r)
+  assert(contains(body, "\"downloads\": 1"))
+}
+
+test "download counter increments on each hit" {
+  let db = fresh_seeded()
+  let _ = test_get(build_routes(db), "/api/v1/packages/json/0.2.0/download")
+  let _ = test_get(build_routes(db), "/api/v1/packages/json/0.2.0/download")
+  let _ = test_get(build_routes(db), "/api/v1/packages/json/0.2.0/download")
+  let r = test_get(build_routes(db), "/api/v1/packages/json/0.2.0")
+  let body = route_response_body(r)
+  assert(contains(body, "\"downloads\": 3"))
+}
+
+test "download count appears in package detail versions list" {
+  let db = fresh_seeded()
+  let _ = test_get(build_routes(db), "/api/v1/packages/json/0.2.0/download")
+  let r = test_get(build_routes(db), "/api/v1/packages/json")
+  let body = route_response_body(r)
+  assert(contains(body, "\"downloads\": 1"))
+}

@@ -45,10 +45,11 @@ pub fun tarball_url(name: string, ver: string) : string {
 // Encode a (version, checksum, yanked) row plus the download URL for `name`.
 pub fun version_json(name: string, r: Row) : Json {
   JObject([
-    ("version",  JString(sopt(row_str(r, 0)))),
-    ("checksum", JString(sopt(row_str(r, 1)))),
-    ("yanked",   JBool(iopt(row_int(r, 2)) != 0)),
-    ("download", JString(download_url(name, sopt(row_str(r, 0)))))
+    ("version",   JString(sopt(row_str(r, 0)))),
+    ("checksum",  JString(sopt(row_str(r, 1)))),
+    ("yanked",    JBool(iopt(row_int(r, 2)) != 0)),
+    ("downloads", JInt(iopt(row_int(r, 3)))),
+    ("download",  JString(download_url(name, sopt(row_str(r, 0)))))
   ])
 }
 
@@ -128,8 +129,9 @@ pub fun handle_get_package(db, req) {
       [] => not_found_response(),
       [prow, ..rest] =>
         match sqlite_query_p(db,
-                "SELECT v.version, v.checksum, v.yanked FROM versions v " +
+                "SELECT v.version, v.checksum, v.yanked, COALESCE(d.count, 0) FROM versions v " +
                 "JOIN packages p ON p.id = v.package_id " +
+                "LEFT JOIN downloads d ON d.version_id = v.id " +
                 "WHERE p.name = ? ORDER BY v.published_at DESC, v.id DESC", [param(name)]) {
           Err(e)   => error_response(e.message),
           Ok(vres) => {
@@ -241,8 +243,9 @@ pub fun handle_get_version(db, req) {
   let name = path_str(req, "name")
   let ver  = path_str(req, "version")
   match sqlite_query_p(db,
-          "SELECT v.version, v.checksum, v.yanked FROM versions v " +
+          "SELECT v.version, v.checksum, v.yanked, COALESCE(d.count, 0) FROM versions v " +
           "JOIN packages p ON p.id = v.package_id " +
+          "LEFT JOIN downloads d ON d.version_id = v.id " +
           "WHERE p.name = ? AND v.version = ?", [param(name), param(ver)]) {
     Err(e)  => error_response(e.message),
     Ok(res) => match res.rows {
@@ -254,10 +257,8 @@ pub fun handle_get_version(db, req) {
 
 // Download a version's tarball. Yanked versions stay downloadable so existing
 // builds remain reproducible (yank only hides from resolution). 404 if the
-// version is unknown.
-// TODO: increment a per-version download counter (needs a downloads table) and
-// stream stored tarball bytes directly once publish persists them; until then
-// redirect to the canonical tarball location.
+// version is unknown. Each download increments the per-version counter in the
+// downloads table.
 pub fun handle_download(db, req) {
   let name = path_str(req, "name")
   let ver  = path_str(req, "version")
@@ -267,8 +268,15 @@ pub fun handle_download(db, req) {
           "WHERE p.name = ? AND v.version = ?", [param(name), param(ver)]) {
     Err(e)  => error_response(e.message),
     Ok(res) => match res.rows {
-      []     => not_found_response(),
-      [_, .._] => redirect(tarball_url(name, ver))
+      []       => not_found_response(),
+      [r, .._] => {
+        let vid = iopt(row_int(r, 0))
+        let _ = sqlite_exec_p(db,
+          "INSERT INTO downloads(version_id, count) VALUES(?, 1) " +
+          "ON CONFLICT(version_id) DO UPDATE SET count = count + 1",
+          [param(show(vid))])
+        redirect(tarball_url(name, ver))
+      }
     }
   }
 }

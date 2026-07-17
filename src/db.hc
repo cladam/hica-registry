@@ -52,6 +52,10 @@ pub fun schema_sql() : string {
   "  published_at TEXT NOT NULL DEFAULT (datetime('now'))," +
   "  published_by INTEGER REFERENCES users(id)," +
   "  UNIQUE(package_id, version)" +
+  ");" +
+  "CREATE TABLE IF NOT EXISTS downloads (" +
+  "  version_id INTEGER PRIMARY KEY REFERENCES versions(id)," +
+  "  count      INTEGER NOT NULL DEFAULT 0" +
   ");"
 }
 
@@ -77,6 +81,11 @@ pub fun upgrade_db(db) {
     "ALTER TABLE versions ADD COLUMN tarball_path TEXT NOT NULL DEFAULT ''")
   let _ = sqlite_exec(db,
     "ALTER TABLE versions ADD COLUMN published_by INTEGER REFERENCES users(id)")
+  let _ = sqlite_exec(db,
+    "CREATE TABLE IF NOT EXISTS downloads (" +
+    "  version_id INTEGER PRIMARY KEY REFERENCES versions(id)," +
+    "  count      INTEGER NOT NULL DEFAULT 0" +
+    ")")
   println("schema upgrade done")
 }
 
