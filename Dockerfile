@@ -33,7 +33,12 @@ RUN sed -i \
         -e 's| --cclinkopts=-L/opt/homebrew/lib||g' \
         hica.hml
 
-RUN hica fetch && hica build -o hica-registry
+# Seed the package cache from the build context. hica fetch on the CI runner
+# correctly downloads .c inline files that the in-Docker fetch misses.
+# The .hica directory is produced by running `hica fetch` before `docker build`.
+COPY .hica /root/.hica/
+
+RUN hica build -o hica-registry
 
 FROM debian:bookworm-slim
 
@@ -44,7 +49,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY --from=builder /build/src/hica-registry ./hica-registry
+COPY --from=builder /build/hica-registry ./hica-registry
 
 # Create a dedicated non-root user for the server process.
 RUN adduser --system --no-create-home --group hica

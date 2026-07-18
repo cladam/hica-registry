@@ -95,6 +95,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install hica
+        run: |
+          curl -fsSL https://www.hica.dev/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Pre-fetch packages into hica cache
+        # Workaround: hica fetch inside Docker does not download .c inline files
+        # for the sqlite and http packages. Fetching on the runner works correctly;
+        # the populated cache is then passed into the Docker build via COPY.
+        run: |
+          hica fetch
+          cp -r ~/.hica .hica
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
