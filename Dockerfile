@@ -1,19 +1,20 @@
 FROM debian:bookworm-slim AS builder
 
+# ARGs must be declared before the RUN that uses them.
+ARG KOKA_VERSION=v3.2.3
+ARG HICA_VERSION=v0.42.5
+
+# Install system deps + Koka + hica in one step so the apt package lists
+# are still present when the install scripts run their own apt calls.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl ca-certificates \
         libcurl4-openssl-dev libmicrohttpd-dev libsqlite3-dev \
         build-essential cmake git ninja-build pkg-config \
+    && curl -sSL https://github.com/koka-lang/koka/releases/download/${KOKA_VERSION}/install.sh | sh \
+    && curl -fsSL https://github.com/cladam/hica/releases/download/${HICA_VERSION}/install.sh | sh \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Koka — pinned to a specific release for reproducible builds.
-ARG KOKA_VERSION=v3.2.3
-RUN curl -sSL https://github.com/koka-lang/koka/releases/download/${KOKA_VERSION}/install.sh | sh
 ENV PATH="/root/.local/bin:/usr/local/bin:$PATH"
-
-# Install hica — pinned likewise.
-ARG HICA_VERSION=v0.42.5
-RUN curl -fsSL https://github.com/cladam/hica/releases/download/${HICA_VERSION}/install.sh | sh
 
 WORKDIR /build
 COPY . .
