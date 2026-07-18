@@ -33,6 +33,10 @@ RUN sed -i \
         -e 's| --cclinkopts=-L/opt/homebrew/lib||g' \
         hica.hml
 
+# Reference HICA_VERSION so that upgrading hica busts this layer's cache in
+# GitHub Actions (cache-from: type=gha,mode=max can otherwise reuse a stale
+# layer from a prior build where package extraction was incomplete).
+ARG HICA_VERSION
 RUN hica fetch && hica build -o hica-registry
 
 FROM debian:bookworm-slim
