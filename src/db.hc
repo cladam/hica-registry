@@ -105,12 +105,22 @@ pub fun upgrade_db(db) {
 // ---------------------------------------------------------------------------
 
 // Insert the admin user and seed token if no users exist yet.
-// Token value: "hica-admin-CHANGEME"
-// SHA-256:     1dcecf9f3ddef5bd408e09fe220f09ee23f97a5c306c4b4dac22fa30543de1a8
+// Dev fallback token value: "hica-admin-CHANGEME"
+// Dev fallback SHA-256:     1dcecf9f3ddef5bd408e09fe220f09ee23f97a5c306c4b4dac22fa30543de1a8
 //
-// Use `Authorization: Bearer hica-admin-CHANGEME` to authenticate.
+// In production, set HICA_REGISTRY_ADMIN_TOKEN_HASH to the SHA-256 of your
+// chosen token before starting the server.  Example (GitHub Actions):
+//   env:
+//     HICA_REGISTRY_ADMIN_TOKEN_HASH: ${{ secrets.REGISTRY_ADMIN_TOKEN_HASH }}
+//
+// Use `Authorization: Bearer <token>` to authenticate.
 // CHANGE THIS TOKEN BEFORE ANY PRODUCTION DEPLOYMENT.
 pub fun seed_admin_token(db) {
+  let dev_hash = "sha256:1dcecf9f3ddef5bd408e09fe220f09ee23f97a5c306c4b4dac22fa30543de1a8"
+  let token_hash = match get_env("HICA_REGISTRY_ADMIN_TOKEN_HASH") {
+    Some(h) => h,
+    None    => dev_hash
+  }
   match sqlite_query(db, "SELECT COUNT(*) FROM users") {
     Err(_) => println("seed: could not query users table"),
     Ok(res) => match res.rows {
@@ -122,8 +132,7 @@ pub fun seed_admin_token(db) {
           let _ = sqlite_exec_p(db,
             "INSERT OR IGNORE INTO tokens(user_id, name, token_hash) " +
             "VALUES ((SELECT id FROM users WHERE handle = ?), ?, ?)",
-            [param("admin"), param("dev-seed"),
-             param("sha256:1dcecf9f3ddef5bd408e09fe220f09ee23f97a5c306c4b4dac22fa30543de1a8")])
+            [param("admin"), param("dev-seed"), param(token_hash)])
           println("seed: admin user and dev token inserted (CHANGE TOKEN IN PRODUCTION)")
         },
       _ => println("seed: unexpected schema state")
