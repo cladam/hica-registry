@@ -97,14 +97,22 @@ pub fun handle_index(db, req) {
 // Only values from a whitelist are returned, preventing SQL injection.
 pub fun handle_search(db, req) {
   let q            = match query_str(req, "q") { None => "", Some(s) => s }
-  let sort_key     = match query_str(req, "sort") { None => "name", Some(s) => s }
+  let sort         = match query_str(req, "sort") { None => "name", Some(s) => s }
   let page_raw     = match query_int(req, "page") { None => 1, Some(n) => n }
   let per_page_raw = match query_int(req, "per_page") { None => 25, Some(n) => n }
   let page         = if page_raw < 1 { 1 } else { page_raw }
   let per_page     = if per_page_raw < 1 { 1 } else if per_page_raw > 100 { 100 } else { per_page_raw }
   let offset       = (page - 1) * per_page
   let like         = "%" + q + "%"
-  let order : string = if sort_key == "downloads" { "COALESCE((SELECT SUM(d.count) FROM downloads d JOIN versions v2 ON v2.id = d.version_id WHERE v2.package_id = p.id), 0) DESC" } else if sort_key == "newest" { "p.created_at DESC" } else if sort_key == "updated" { "COALESCE((SELECT MAX(v2.published_at) FROM versions v2 WHERE v2.package_id = p.id), p.created_at) DESC" } else { "p.name ASC" }
+  let order : string = if sort == "downloads" { 
+    "COALESCE((SELECT SUM(d.count) FROM downloads d JOIN versions v2 ON v2.id = d.version_id WHERE v2.package_id = p.id), 0) DESC" 
+  } else if sort == "newest" { 
+    "p.created_at DESC" 
+  } else if sort == "updated" { 
+    "COALESCE((SELECT MAX(v2.published_at) FROM versions v2 WHERE v2.package_id = p.id), p.created_at) DESC" 
+  } else { 
+    "p.name ASC" 
+  }
   match sqlite_query_p(db,
           "SELECT COUNT(*) FROM packages p " +
           "WHERE p.name LIKE ? OR p.description LIKE ?",
@@ -130,7 +138,7 @@ pub fun handle_search(db, req) {
             ]))
             json_response(json_emit(JObject([
               ("query",    JString(q)),
-              ("sort",     JString(sort_key)),
+              ("sort",     JString(sort)),
               ("page",     JInt(page)),
               ("per_page", JInt(per_page)),
               ("total",    JInt(total)),
