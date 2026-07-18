@@ -2,7 +2,7 @@ FROM debian:bookworm-slim AS builder
 
 # ARGs must be declared before the RUN that uses them.
 ARG KOKA_VERSION=v3.2.3
-ARG HICA_VERSION=v0.42.5
+ARG HICA_VERSION=v0.42.7
 
 # Install system deps + Koka + hica in one step so the apt package lists
 # are still present when the Koka install script runs its own apt calls.
