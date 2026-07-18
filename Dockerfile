@@ -2,15 +2,23 @@ FROM debian:bookworm-slim AS builder
 
 # ARGs must be declared before the RUN that uses them.
 ARG KOKA_VERSION=v3.2.3
+ARG HICA_VERSION=v0.42.5
 
 # Install system deps + Koka + hica in one step so the apt package lists
-# are still present when the install scripts run their own apt calls.
+# are still present when the Koka install script runs its own apt calls.
+# hica is downloaded directly from the GitHub release (no install.sh published).
+# uname -m gives x86_64 or aarch64; map the latter to arm64 to match asset names.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl ca-certificates \
         libcurl4-openssl-dev libmicrohttpd-dev libsqlite3-dev \
         build-essential cmake git ninja-build pkg-config \
     && curl -sSL https://github.com/koka-lang/koka/releases/download/${KOKA_VERSION}/install.sh | sh \
-    && curl -fsSL https://www.hica.dev/install.sh | sh \
+    && ARCH=$(uname -m | sed 's/aarch64/arm64/') \
+    && curl -fsSL "https://github.com/cladam/hica/releases/download/${HICA_VERSION}/hica-linux-${ARCH}.tar.gz" \
+       -o /tmp/hica.tar.gz \
+    && tar -xzf /tmp/hica.tar.gz -C /tmp \
+    && find /tmp -name "hica" -type f -exec install -m755 {} /usr/local/bin/hica \; \
+    && rm /tmp/hica.tar.gz \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PATH="/root/.local/bin:/usr/local/bin:$PATH"
