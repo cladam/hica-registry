@@ -31,6 +31,42 @@ test "GET /api/v1/index lists every package with its latest non-yanked version" 
   assert(contains(body, "\"latest\": \"0.4.0\""))
 }
 
+// ── GET /api/v1/summary ───────────────────────────────────────────────────────
+
+test "GET /api/v1/summary returns 200" {
+  let db = fresh_seeded()
+  let r = test_get(build_routes(db), "/api/v1/summary")
+  assert(route_response_status(r) == 200)
+}
+
+test "GET /api/v1/summary reports correct package and version counts" {
+  let db = fresh_seeded()
+  let body = route_response_body(test_get(build_routes(db), "/api/v1/summary"))
+  assert(contains(body, "\"num_packages\": 2"))
+  assert(contains(body, "\"num_versions\": 4"))
+}
+
+test "GET /api/v1/summary reports zero downloads when none recorded" {
+  let db = fresh_seeded()
+  let body = route_response_body(test_get(build_routes(db), "/api/v1/summary"))
+  assert(contains(body, "\"num_downloads\": 0"))
+}
+
+test "GET /api/v1/summary includes most_downloaded, new_packages, just_updated arrays" {
+  let db = fresh_seeded()
+  let body = route_response_body(test_get(build_routes(db), "/api/v1/summary"))
+  assert(contains(body, "\"most_downloaded\""))
+  assert(contains(body, "\"new_packages\""))
+  assert(contains(body, "\"just_updated\""))
+}
+
+test "GET /api/v1/summary lists entries with name, version, downloads fields" {
+  let db = fresh_seeded()
+  let body = route_response_body(test_get(build_routes(db), "/api/v1/summary"))
+  assert(contains(body, "\"name\": \"json\""))
+  assert(contains(body, "\"downloads\""))
+}
+
 // ── GET /api/v1/search ───────────────────────────────────────────────────────
 
 test "GET /api/v1/search?q=json finds the json package by name" {

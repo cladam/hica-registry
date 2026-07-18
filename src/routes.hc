@@ -7,6 +7,7 @@
 // Endpoints:
 //   GET  /health
 //   GET  /api/v1/index                          list all packages + latest
+//   GET  /api/v1/summary                        registry-wide stats
 //   GET  /api/v1/search?q=<term>                substring search
 //   GET  /api/v1/packages/{name}               package detail + versions
 //   GET  /api/v1/packages/{name}/{version}     single version metadata
@@ -44,6 +45,17 @@ pub fun tarball_url(name: string, ver: string) : string {
 // JSON row encoders
 // ---------------------------------------------------------------------------
 
+// Encode a summary list entry row.
+// Columns expected: 0=name, 1=description, 2=latest_version, 3=total_downloads.
+pub fun pkg_stub_json(r: Row) : Json {
+  JObject([
+    ("name",        JString(sopt(row_str(r, 0)))),
+    ("description", JString(sopt(row_str(r, 1)))),
+    ("version",     JString(sopt(row_str(r, 2)))),
+    ("downloads",   JInt(iopt(row_int(r, 3))))
+  ])
+}
+
 // Encode a (version, checksum, yanked) row plus the download URL for `name`.
 pub fun version_json(name: string, r: Row) : Json {
   JObject([
@@ -74,6 +86,79 @@ pub fun first_active(rows: list<Row>) : string {
 
 pub fun handle_health(req) {
   text_response("ok")
+}
+
+// GET /api/v1/summary — registry-wide stats:
+//   num_packages, num_versions, num_downloads,
+//   most_downloaded (top 5), new_packages (5 newest), just_updated (5 recently published).
+pub fun handle_summary(db, req) {
+  match sqlite_query_p(db,
+          "SELECT (SELECT COUNT(*) FROM packages), " +
+          "       (SELECT COUNT(*) FROM versions), " +
+          "       (SELECT COALESCE(SUM(count), 0) FROM downloads)",
+          []) {
+    Err(e) => error_response(e.message),
+    Ok(sr) => match sr.rows {
+      [] => error_response("stats query returned no rows"),
+      [srow, .._] => {
+        let num_pkgs = iopt(row_int(srow, 0))
+        let num_vers = iopt(row_int(srow, 1))
+        let num_dl   = iopt(row_int(srow, 2))
+        match sqlite_query_p(db,
+                "SELECT p.name, p.description, " +
+                "  (SELECT v.version FROM versions v WHERE v.package_id = p.id " +
+                "   AND v.yanked = 0 ORDER BY v.published_at DESC, v.id DESC LIMIT 1), " +
+                "  COALESCE(SUM(d.count), 0) " +
+                "FROM packages p " +
+                "LEFT JOIN versions v2 ON v2.package_id = p.id " +
+                "LEFT JOIN downloads d ON d.version_id = v2.id " +
+                "GROUP BY p.id, p.name, p.description " +
+                "ORDER BY COALESCE(SUM(d.count), 0) DESC LIMIT 5",
+                []) {
+          Err(e) => error_response(e.message),
+          Ok(dr) =>
+            match sqlite_query_p(db,
+                    "SELECT p.name, p.description, " +
+                    "  (SELECT v.version FROM versions v WHERE v.package_id = p.id " +
+                    "   AND v.yanked = 0 ORDER BY v.published_at DESC, v.id DESC LIMIT 1), " +
+                    "  COALESCE((SELECT SUM(d2.count) FROM downloads d2 " +
+                    "             JOIN versions v2 ON v2.id = d2.version_id " +
+                    "             WHERE v2.package_id = p.id), 0) " +
+                    "FROM packages p ORDER BY p.created_at DESC LIMIT 5",
+                    []) {
+              Err(e) => error_response(e.message),
+              Ok(nr) =>
+                match sqlite_query_p(db,
+                        "SELECT p.name, p.description, " +
+                        "  (SELECT v.version FROM versions v WHERE v.package_id = p.id " +
+                        "   AND v.yanked = 0 ORDER BY v.published_at DESC, v.id DESC LIMIT 1), " +
+                        "  COALESCE((SELECT SUM(d2.count) FROM downloads d2 " +
+                        "             JOIN versions v2 ON v2.id = d2.version_id " +
+                        "             WHERE v2.package_id = p.id), 0) " +
+                        "FROM packages p " +
+                        "ORDER BY (SELECT MAX(v.published_at) FROM versions v " +
+                        "          WHERE v.package_id = p.id) DESC LIMIT 5",
+                        []) {
+                  Err(e) => error_response(e.message),
+                  Ok(ur) => {
+                    let most_dl  = map(dr.rows, (r) => pkg_stub_json(r))
+                    let new_pkgs = map(nr.rows, (r) => pkg_stub_json(r))
+                    let just_upd = map(ur.rows, (r) => pkg_stub_json(r))
+                    json_response(json_emit(JObject([
+                      ("num_packages",    JInt(num_pkgs)),
+                      ("num_versions",    JInt(num_vers)),
+                      ("num_downloads",   JInt(num_dl)),
+                      ("most_downloaded", JArray(most_dl)),
+                      ("new_packages",    JArray(new_pkgs)),
+                      ("just_updated",    JArray(just_upd))
+                    ])))
+                  }
+                }
+            }
+        }
+      }
+    }
+  }
 }
 
 pub fun handle_index(db, req) {
@@ -558,6 +643,7 @@ pub fun build_routes(db) {
   [
     get("/health",                                              handle_health),
     get("/api/v1/index",                                        (req) => handle_index(db, req)),
+    get("/api/v1/summary",                                      (req) => handle_summary(db, req)),
     get("/api/v1/search",                                       (req) => handle_search(db, req)),
     get("/api/v1/packages/\{name\}",                             (req) => handle_get_package(db, req)),
     get("/api/v1/packages/\{name\}/owners",                      (req) => handle_list_owners(db, req)),
