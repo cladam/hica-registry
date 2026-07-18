@@ -1,54 +1,18 @@
-FROM debian:bookworm-slim AS builder
-
-# ARGs must be declared before the RUN that uses them.
-ARG KOKA_VERSION=v3.2.3
-ARG HICA_VERSION=v0.45.7
-
-# Install system deps + Koka + hica in one step so the apt package lists
-# are still present when the Koka install script runs its own apt calls.
-# hica is downloaded directly from the GitHub release (no install.sh published).
-# uname -m gives x86_64 or aarch64; map the latter to arm64 to match asset names.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl ca-certificates \
-        libcurl4-openssl-dev libmicrohttpd-dev libsqlite3-dev \
-        build-essential cmake git ninja-build pkg-config \
-    && curl -sSL https://github.com/koka-lang/koka/releases/download/${KOKA_VERSION}/install.sh | sh \
-    && ARCH=$(uname -m | sed 's/aarch64/arm64/') \
-    && curl -fsSL "https://github.com/cladam/hica/releases/download/${HICA_VERSION}/hica-linux-${ARCH}.tar.gz" \
-       -o /tmp/hica.tar.gz \
-    && tar -xzf /tmp/hica.tar.gz -C /tmp \
-    && find /tmp -name "hica" -type f -exec install -m755 {} /usr/local/bin/hica \; \
-    && rm /tmp/hica.tar.gz \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV PATH="/root/.local/bin:/usr/local/bin:$PATH"
-
-WORKDIR /build
-COPY . .
-
-# Strip macOS-only homebrew paths from hica.hml — not needed on Linux
-# where headers/libs live in standard system paths.
-RUN sed -i \
-        -e 's| --ccincdir=/opt/homebrew/include||g' \
-        -e 's| --cclinkopts=-L/opt/homebrew/lib||g' \
-        hica.hml
-
-# Reference HICA_VERSION so that upgrading hica busts this layer's cache in
-# GitHub Actions (cache-from: type=gha,mode=max can otherwise reuse a stale
-# layer from a prior build where package extraction was incomplete).
-ARG HICA_VERSION
-RUN hica fetch && hica build -o hica-registry
-
 FROM debian:bookworm-slim
 
-# libmicrohttpd12 is the Debian Bookworm package name; verify when bumping the base image.
+# Download the latest hica-registry release binary from GitHub.
+# To pin to a specific version, replace "latest/download" with
+# "download/v0.3.0" in the URL below.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        libcurl4 libmicrohttpd12 libsqlite3-0 ca-certificates \
+        curl ca-certificates \
+        libcurl4 libmicrohttpd12 libsqlite3-0 \
+    && ARCH=$(uname -m | sed 's/aarch64/arm64/') \
+    && curl -fsSL "https://github.com/cladam/hica-registry/releases/latest/download/hica-registry-linux-${ARCH}" \
+       -o /usr/local/bin/hica-registry \
+    && chmod +x /usr/local/bin/hica-registry \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-
-COPY --from=builder /build/src/hica-registry ./hica-registry
 
 # Create a dedicated non-root user for the server process.
 RUN adduser --system --no-create-home --group hica
@@ -78,4 +42,4 @@ ENV HICA_TARBALL_DIR=/app/tarballs
 
 USER hica
 
-CMD ["./hica-registry"]
+CMD ["/usr/local/bin/hica-registry"]

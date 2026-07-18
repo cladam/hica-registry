@@ -85,10 +85,6 @@ jobs:
             failed=1
           fi
           exit $failed
-      - name: Build hica-registry
-        shell: bash
-        run: |
-          hica fetch && hica build -o hica-registry
 
   docker:
     needs: test
@@ -139,7 +135,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Install Koka
+        run: |
+          curl -sSL https://github.com/koka-lang/koka/releases/latest/download/install.sh | sudo sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install hica
+        run: |
+          curl -fsSL https://www.hica.dev/install.sh | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcurl4-openssl-dev libmicrohttpd-dev libsqlite3-dev
+
+      - name: Build binary
+        run: |
+          sed -i \
+            -e 's| --ccincdir=/opt/homebrew/include||g' \
+            -e 's| --cclinkopts=-L/opt/homebrew/lib||g' \
+            hica.hml
+          hica fetch && hica build -o hica-registry-linux-x86_64
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
+          files: hica-registry-linux-x86_64
