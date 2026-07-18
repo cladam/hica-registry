@@ -124,6 +124,34 @@ On first boot the server creates `registry.db`, applies the schema, and inserts
 a dev admin user with token `hica-admin-CHANGEME`. **Rotate this token before
 any production deployment.**
 
+### Environment variables
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `HICA_REGISTRY_ADMIN_TOKEN_HASH` | SHA-256 of `hica-admin-CHANGEME` | SHA-256 of the seed admin token, prefixed with `sha256:`. Set this to a secret value in production. |
+| `HICA_TARBALL_DIR` | `./tarballs` | Directory where published tarballs are stored. |
+
+Generate a token hash for production:
+
+```sh
+echo -n "your-secret-token" | sha256sum | awk '{print "sha256:" $1}'
+```
+
+Then pass it to the server at startup:
+
+```sh
+HICA_REGISTRY_ADMIN_TOKEN_HASH=sha256:<hash> hica run src/main.hc
+```
+
+In GitHub Actions, use a repository secret:
+
+```yaml
+- name: Run registry
+  env:
+    HICA_REGISTRY_ADMIN_TOKEN_HASH: ${{ secrets.REGISTRY_ADMIN_TOKEN_HASH }}
+  run: ./hica-registry
+```
+
 Tarballs are written to `./tarballs/<name>/` by default. Override with:
 
 ```sh
