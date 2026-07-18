@@ -3,7 +3,7 @@ FROM debian:bookworm-slim AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl ca-certificates \
         libcurl4-openssl-dev libmicrohttpd-dev libsqlite3-dev \
-        build-essential cmake git \
+        build-essential cmake git ninja-build pkg-config \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Koka — pinned to a specific release for reproducible builds.
