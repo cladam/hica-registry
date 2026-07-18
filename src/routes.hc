@@ -637,6 +637,70 @@ pub fun handle_remove_owner(db, req) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// hica compiler download tracking
+// ---------------------------------------------------------------------------
+
+// GET /api/v1/hica/downloads — total download count for the hica compiler itself,
+// broken down by version and by OS.
+pub fun handle_hica_downloads(db, req) {
+  match sqlite_query_p(db,
+          "SELECT COALESCE(SUM(count), 0) FROM hica_downloads", []) {
+    Err(e) => error_response(e.message),
+    Ok(tr) => match tr.rows {
+      [] => error_response("stats query returned no rows"),
+      [trow, .._] => {
+        let total = iopt(row_int(trow, 0))
+        match sqlite_query_p(db,
+                "SELECT version, COALESCE(SUM(count), 0) FROM hica_downloads " +
+                "GROUP BY version ORDER BY version DESC", []) {
+          Err(e) => error_response(e.message),
+          Ok(vr) =>
+            match sqlite_query_p(db,
+                    "SELECT os, COALESCE(SUM(count), 0) FROM hica_downloads " +
+                    "WHERE os != '' GROUP BY os ORDER BY SUM(count) DESC", []) {
+              Err(e) => error_response(e.message),
+              Ok(or) => {
+                let by_version = map(vr.rows, (r) => JObject([
+                  ("version",   JString(sopt(row_str(r, 0)))),
+                  ("downloads", JInt(iopt(row_int(r, 1))))
+                ]))
+                let by_os = map(or.rows, (r) => JObject([
+                  ("os",        JString(sopt(row_str(r, 0)))),
+                  ("downloads", JInt(iopt(row_int(r, 1))))
+                ]))
+                json_response(json_emit(JObject([
+                  ("total",      JInt(total)),
+                  ("by_version", JArray(by_version)),
+                  ("by_os",      JArray(by_os))
+                ])))
+              }
+            }
+        }
+      }
+    }
+  }
+}
+
+// GET /api/v1/hica/{os}/{arch}/download
+// Counts the download (by os/arch) then 302s to GitHub's stable
+// releases/latest URL, which GitHub resolves to the current release
+// automatically. No version configuration needed on the registry side.
+// HICA_RELEASES_BASE_URL overrides the GitHub base if needed.
+pub fun handle_hica_download(db, req) {
+  let os   = path_str(req, "os")
+  let arch = path_str(req, "arch")
+  let _ = sqlite_exec_p(db,
+    "INSERT INTO hica_downloads(version, os, arch, count) VALUES('latest', ?, ?, 1) " +
+    "ON CONFLICT(version, os, arch) DO UPDATE SET count = count + 1",
+    [param(os), param(arch)])
+  let base = match get_env("HICA_RELEASES_BASE_URL") {
+    Some(u) => u,
+    None    => "https://github.com/cladam/hica/releases/latest/download"
+  }
+  redirect(base + "/hica-" + os + "-" + arch)
+}
+
 // Build the registry's route table over an open database handle. Shared by the
 // server (main.hc) and the in-process tests.
 pub fun build_routes(db) {
@@ -653,6 +717,8 @@ pub fun build_routes(db) {
     get("/api/v1/packages/\{name\}/\{version\}",                 (req) => handle_get_version(db, req)),
     put("/api/v1/packages/\{name\}/\{version\}",                 (req) => handle_publish(db, req)),
     delete("/api/v1/packages/\{name\}/\{version\}/yank",         (req) => handle_yank(db, req)),
-    put("/api/v1/packages/\{name\}/\{version\}/unyank",          (req) => handle_unyank(db, req))
+    put("/api/v1/packages/\{name\}/\{version\}/unyank",          (req) => handle_unyank(db, req)),
+    get("/api/v1/hica/downloads",                                (req) => handle_hica_downloads(db, req)),
+    get("/api/v1/hica/\{os\}/\{arch\}/download",                 (req) => handle_hica_download(db, req))
   ]
 }

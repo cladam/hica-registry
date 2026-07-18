@@ -61,6 +61,14 @@ pub fun schema_sql() : string {
   "  package_id INTEGER NOT NULL REFERENCES packages(id)," +
   "  user_id    INTEGER NOT NULL REFERENCES users(id)," +
   "  PRIMARY KEY (package_id, user_id)" +
+  ");" +
+  "CREATE TABLE IF NOT EXISTS hica_downloads (" +
+  "  id      INTEGER PRIMARY KEY," +
+  "  version TEXT NOT NULL," +
+  "  os      TEXT NOT NULL DEFAULT ''," +
+  "  arch    TEXT NOT NULL DEFAULT ''," +
+  "  count   INTEGER NOT NULL DEFAULT 0," +
+  "  UNIQUE(version, os, arch)" +
   ");"
 }
 
@@ -96,6 +104,15 @@ pub fun upgrade_db(db) {
     "  package_id INTEGER NOT NULL REFERENCES packages(id)," +
     "  user_id    INTEGER NOT NULL REFERENCES users(id)," +
     "  PRIMARY KEY (package_id, user_id)" +
+    ")")
+  let _ = sqlite_exec(db,
+    "CREATE TABLE IF NOT EXISTS hica_downloads (" +
+    "  id      INTEGER PRIMARY KEY," +
+    "  version TEXT NOT NULL," +
+    "  os      TEXT NOT NULL DEFAULT ''," +
+    "  arch    TEXT NOT NULL DEFAULT ''," +
+    "  count   INTEGER NOT NULL DEFAULT 0," +
+    "  UNIQUE(version, os, arch)" +
     ")")
   println("schema upgrade done")
 }
