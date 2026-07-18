@@ -2,7 +2,7 @@ FROM debian:bookworm-slim AS builder
 
 # ARGs must be declared before the RUN that uses them.
 ARG KOKA_VERSION=v3.2.3
-ARG HICA_VERSION=v0.42.7
+ARG HICA_VERSION=v0.45.7
 
 # Install system deps + Koka + hica in one step so the apt package lists
 # are still present when the Koka install script runs its own apt calls.
@@ -33,10 +33,7 @@ RUN sed -i \
         -e 's| --cclinkopts=-L/opt/homebrew/lib||g' \
         hica.hml
 
-# Download all declared dependencies from pkg.hica.dev.
-RUN hica fetch
-
-RUN hica build -o hica-registry
+RUN hica fetch && hica build -o hica-registry
 
 FROM debian:bookworm-slim
 
@@ -47,7 +44,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY --from=builder /build/hica-registry ./hica-registry
+COPY --from=builder /build/src/hica-registry ./hica-registry
 
 # Create a dedicated non-root user for the server process.
 RUN adduser --system --no-create-home --group hica
