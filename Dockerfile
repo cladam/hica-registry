@@ -33,8 +33,7 @@ RUN sed -i \
         -e 's| --cclinkopts=-L/opt/homebrew/lib||g' \
         hica.hml
 
-RUN hica fetch
-RUN hica build -o hica-registry
+RUN hica fetch && hica build -o hica-registry
 
 FROM debian:bookworm-slim
 
