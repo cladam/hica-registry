@@ -1,5 +1,10 @@
 .koka
-.hica
+# Track the .hica directory itself (contains .gitkeep so COPY .hica works in Docker)
+# but ignore the package cache and build artifacts inside it.
+.hica/cache/
+.hica/stdlib/
+.hica/*.kk
+.hica/*.kki
 
 examples/*
 !examples/*.hc

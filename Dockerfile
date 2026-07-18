@@ -33,10 +33,8 @@ RUN sed -i \
         -e 's| --cclinkopts=-L/opt/homebrew/lib||g' \
         hica.hml
 
-# Seed the package cache from the build context. hica fetch on the CI runner
-# correctly downloads .c inline files that the in-Docker fetch misses.
-# The .hica directory is produced by running `hica fetch` before `docker build`.
-COPY .hica /root/.hica/
+# Download all declared dependencies from pkg.hica.dev.
+RUN hica fetch
 
 RUN hica build -o hica-registry
 
