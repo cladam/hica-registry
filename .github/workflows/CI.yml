@@ -85,6 +85,10 @@ jobs:
             failed=1
           fi
           exit $failed
+      - name: Build hica-registry
+        shell: bash
+        run: |
+          hica fetch && hica build -o hica-registry
 
   docker:
     needs: test
