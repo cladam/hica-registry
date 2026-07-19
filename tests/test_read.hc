@@ -15,7 +15,8 @@ test "GET /health returns 200 ok" {
   let db = fresh_seeded()
   let r = test_get(build_routes(db), "/health")
   assert(route_response_status(r) == 200)
-  assert(route_response_body(r) == "ok")
+  assert(contains(route_response_body(r), "\"status\": \"ok\""))
+  assert(contains(route_response_body(r), "\"db\": \"ok\""))
 }
 
 // ── GET /api/v1/index ────────────────────────────────────────────────────────

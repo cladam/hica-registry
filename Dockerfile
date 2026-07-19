@@ -37,7 +37,7 @@ RUN mkdir -p tarballs data && chown hica:hica tarballs data
 VOLUME ["/app/tarballs", "/app/data"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:8080/health || exit 1
+    CMD curl -sf http://localhost:8080/health | grep '"status": "ok"' || exit 1
 
 EXPOSE 8080
 

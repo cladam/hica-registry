@@ -84,8 +84,17 @@ pub fun first_active(rows: list<Row>) : string {
 // Handlers
 // ---------------------------------------------------------------------------
 
-pub fun handle_health(req) {
-  text_response("ok")
+pub fun handle_health(db, req) {
+  match sqlite_query(db, "SELECT 1") {
+    Ok(_)  => json_response(json_emit(JObject([
+               ("status", JString("ok")),
+               ("db",     JString("ok"))
+             ]))),
+    Err(e) => json_status(503, json_emit(JObject([
+               ("status", JString("degraded")),
+               ("db",     JString("error: " + e.message))
+             ])))
+  }
 }
 
 // GET /api/v1/summary — registry-wide stats:
@@ -705,7 +714,7 @@ pub fun handle_hica_download(db, req) {
 // server (main.hc) and the in-process tests.
 pub fun build_routes(db) {
   [
-    get("/health",                                              handle_health),
+    get("/health",                                              (req) => handle_health(db, req)),
     get("/api/v1/index",                                        (req) => handle_index(db, req)),
     get("/api/v1/summary",                                      (req) => handle_summary(db, req)),
     get("/api/v1/search",                                       (req) => handle_search(db, req)),

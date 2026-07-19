@@ -116,15 +116,45 @@ jobs:
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
 
-      - name: Build and push
+      - name: Build and load for smoke test
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: ${{ github.event_name != 'pull_request' }}
+          load: true
+          tags: hica-registry:smoke
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          mkdir -p /tmp/registry-smoke
+          docker run -d --name registry-smoke \
+            -p 8080:8080 \
+            -v /tmp/registry-smoke:/app/data \
+            -v /tmp/registry-smoke:/app/tarballs \
+            -e HICA_REGISTRY_ADMIN_TOKEN_HASH=sha256:abc123 \
+            hica-registry:smoke
+          for i in $(seq 1 20); do
+            if curl -sf http://localhost:8080/health > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          BODY=$(curl -sf http://localhost:8080/health)
+          echo "$BODY"
+          echo "$BODY" | grep '"status": "ok"'
+          echo "$BODY" | grep '"db": "ok"'
+          docker stop registry-smoke
+
+      - name: Push to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
-          cache-to: type=gha,mode=max
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
