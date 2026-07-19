@@ -31,7 +31,7 @@ RUN adduser --system --no-create-home --group hica
 #
 # Generate the token hash:
 #   echo -n "your-secret-token" | sha256sum | awk '{print "sha256:" $1}'
-RUN mkdir -p tarballs data && chown hica:hica tarballs data
+RUN mkdir -p /app/tarballs /app/data && chown -R hica:hica /app
 
 # Declare the volumes so orchestrators know these paths hold persistent data.
 VOLUME ["/app/tarballs", "/app/data"]
