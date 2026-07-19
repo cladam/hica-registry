@@ -7,12 +7,6 @@ A server-side package registry for [hica](https://www.hica.dev), inspired by
 The registry is both a real service and a flagship dogfooding project: if hica
 can host its own package registry, it can build real web services.
 
-> **Status:** Phase 3 complete — download counter, yank, unyank, and the
-> owners API are all done; 59 tests pass. The CLI (`hica publish` / `hica login`)
-> remains open in the compiler repo.
-> See [docs/hica-registry-server.md](docs/hica-registry-server.md) for the full
-> design document.
-
 ## Why
 
 Today `pkg.hica.dev` is a **static file host**: packages are published over FTP
@@ -74,6 +68,7 @@ download):
 
 | Method | Path | Auth | Purpose |
 |---|---|---|---|
+| `GET` | `/health` | — | Service health: `{"status":"ok","db":"ok"}` (HTTP 503 if DB unreachable) |
 | `GET` | `/api/v1/packages/{name}` | — | Package detail: metadata, `latest`, every version |
 | `GET` | `/api/v1/packages/{name}/{version}` | — | Single version metadata |
 | `GET` | `/api/v1/packages/{name}/{version}/download` | — | 302 redirect to the tarball; increments per-version download counter |
@@ -129,6 +124,7 @@ any production deployment.**
 | Variable | Default | Purpose |
 |---|---|---|
 | `HICA_REGISTRY_ADMIN_TOKEN_HASH` | SHA-256 of `hica-admin-CHANGEME` | SHA-256 of the seed admin token, prefixed with `sha256:`. Set this to a secret value in production. |
+| `HICA_DB_PATH` | `registry.db` | Path to the SQLite database file. |
 | `HICA_TARBALL_DIR` | `./tarballs` | Directory where published tarballs are stored. |
 
 Generate a token hash for production:
@@ -141,15 +137,6 @@ Then pass it to the server at startup:
 
 ```sh
 HICA_REGISTRY_ADMIN_TOKEN_HASH=sha256:<hash> hica run src/main.hc
-```
-
-In GitHub Actions, use a repository secret:
-
-```yaml
-- name: Run registry
-  env:
-    HICA_REGISTRY_ADMIN_TOKEN_HASH: ${{ secrets.REGISTRY_ADMIN_TOKEN_HASH }}
-  run: ./hica-registry
 ```
 
 Tarballs are written to `./tarballs/<name>/` by default. Override with:
@@ -171,7 +158,40 @@ The server recomputes the SHA-256 of the received tarball and stores only the
 hash — the declared `checksum` field in metadata is optional but verified if
 present. The raw token is never stored; only its SHA-256 reaches the database.
 
-## Documents
+## Docker deployment
 
-- [docs/hica-registry-server.md](docs/hica-registry-server.md) — the full design
-  document (schema, publishing flow, client changes, security, operations).
+The registry ships as a Docker image published to
+`ghcr.io/cladam/hica-registry`. The database and tarballs must be mounted from
+host storage so they survive container restarts and upgrades.
+
+### Quick start
+
+```sh
+# 1. Copy the example env file and fill in your values
+cp .env.example .env
+
+# 2. Generate the admin token hash
+echo -n "your-secret-token" | sha256sum | awk '{print "sha256:" $1}'
+# Paste the result into .env as HICA_REGISTRY_ADMIN_TOKEN_HASH
+
+# 3. Set the host paths where persistent data will live
+# REGISTRY_DATA_DIR=/mnt/registry/data
+# REGISTRY_TARBALL_DIR=/mnt/registry/tarballs
+
+# 4. Start
+docker compose up -d
+```
+
+The server will be reachable on port `8080`. Put your HTTPS terminator in front
+of it; no other ports are needed.
+
+### Updating
+
+```sh
+docker compose pull
+docker compose up -d
+```
+
+No data is lost — the database and tarballs live on the host paths outside the
+container.
+
