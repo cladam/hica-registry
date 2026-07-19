@@ -17,28 +17,32 @@ WORKDIR /app
 # Create a dedicated non-root user for the server process.
 RUN adduser --system --no-create-home --group hica
 
-# Tarball store and database are runtime data — mount these as volumes.
+# Tarball store and database are runtime data — mount these from host storage.
 #
+# Via docker-compose (recommended): see docker-compose.yml + .env.example
+#
+# Manual run:
 #   docker run -d \
 #     -p 8080:8080 \
-#     -v /host/data/registry.db:/app/registry.db \
+#     -v /host/data/registry.db:/app/data/registry.db \
 #     -v /host/data/tarballs:/app/tarballs \
 #     -e HICA_REGISTRY_ADMIN_TOKEN_HASH=sha256:<hash> \
 #     hica-registry
 #
 # Generate the token hash:
 #   echo -n "your-secret-token" | sha256sum | awk '{print "sha256:" $1}'
-RUN mkdir -p tarballs && chown hica:hica tarballs
+RUN mkdir -p tarballs data && chown hica:hica tarballs data
 
-# Declare the volume so orchestrators know these paths hold persistent data.
-VOLUME ["/app/tarballs"]
+# Declare the volumes so orchestrators know these paths hold persistent data.
+VOLUME ["/app/tarballs", "/app/data"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:8080/health || exit 1
 
 EXPOSE 8080
 
-ENV HICA_TARBALL_DIR=/app/tarballs
+ENV HICA_TARBALL_DIR=/app/tarballs \
+    HICA_DB_PATH=/app/data/registry.db
 
 USER hica
 

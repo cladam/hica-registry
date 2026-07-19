@@ -1,0 +1,19 @@
+services:
+  registry:
+    image: ghcr.io/cladam/hica-registry:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      HICA_REGISTRY_ADMIN_TOKEN_HASH: "${HICA_REGISTRY_ADMIN_TOKEN_HASH}"
+      HICA_TARBALL_DIR: /app/tarballs
+      HICA_DB_PATH: /app/data/registry.db
+    volumes:
+      - ${REGISTRY_DATA_DIR}/registry.db:/app/data/registry.db
+      - ${REGISTRY_TARBALL_DIR}:/app/tarballs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3

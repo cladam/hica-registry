@@ -30,7 +30,8 @@ import "./db"
 import "./routes"
 
 fun main() {
-  match sqlite_open("registry.db") {
+  let db_path = env_or("HICA_DB_PATH", "registry.db")
+  match sqlite_open(db_path) {
     Err(e) => println("failed to open database: " + e.message),
     Ok(db) => {
       init_db(db)
