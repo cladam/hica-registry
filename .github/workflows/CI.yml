@@ -127,11 +127,8 @@ jobs:
 
       - name: Smoke test
         run: |
-          mkdir -p /tmp/registry-smoke
           docker run -d --name registry-smoke \
             -p 8080:8080 \
-            -v /tmp/registry-smoke:/app/data \
-            -v /tmp/registry-smoke:/app/tarballs \
             -e HICA_REGISTRY_ADMIN_TOKEN_HASH=sha256:abc123 \
             hica-registry:smoke
           for i in $(seq 1 20); do
@@ -140,6 +137,12 @@ jobs:
             fi
             sleep 1
           done
+          if ! curl -sf http://localhost:8080/health > /dev/null; then
+            echo "Server did not start — container logs:"
+            docker logs registry-smoke
+            docker stop registry-smoke
+            exit 1
+          fi
           BODY=$(curl -sf http://localhost:8080/health)
           echo "$BODY"
           echo "$BODY" | grep '"status": "ok"'
