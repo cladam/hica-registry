@@ -285,7 +285,7 @@ pub fun handle_get_package(db, req) {
 //                  the verified digest is what gets stored regardless.
 // Persistence:     Tarball is written to HICA_TARBALL_DIR/<name>/<name>-<ver>.tar.gz
 //                  (default dir: ./tarballs).  The directory is created if absent.
-pub fun handle_publish(db, req) {
+pub fun handle_publish(db, req, on_publish) {
   let name = path_str(req, "name")
   let ver  = path_str(req, "version")
   // 1. Authenticate ─────────────────────────────────────────────────────────
@@ -309,71 +309,83 @@ pub fun handle_publish(db, req) {
               let repo    = str_or(mdoc |> at("repository"), "")
               let lic     = str_or(mdoc |> at("license"), "")
               let claimed = str_or(mdoc |> at("checksum"), "")
-              // 4. Determine tarball store dir ───────────────────────────────
-              let tdir  = match get_env("HICA_TARBALL_DIR") {
-                Some(d) => d,
-                None    => "./tarballs"
-              }
-              let pkg_dir = tdir + "/" + name
-              let tpath   = pkg_dir + "/" + name + "-" + ver + ".tar.gz"
-              // 5. Write tarball to disk ─────────────────────────────────────
-              match exec("mkdir -p " + pkg_dir) {
-                Err(e) => status_response(500, "could not create tarball dir: " + e),
-                Ok(_) => {
-                  write_file(tpath, tar.bytes)
-                  // 6. Verify sha256 ─────────────────────────────────────────
-                  match sha256_file(tpath) {
-                    Err(e) => status_response(500, "sha256 failed: " + e),
-                    Ok(actual_sum) =>
-                      // 7. Compare to declared checksum (if client sent one) ─
-                      if claimed != "" && claimed != actual_sum {
-                        status_response(400,
-                          "checksum mismatch: declared " + claimed +
-                          " but computed " + actual_sum)
-                      } else {
-                        // 8. Upsert package, bootstrap ownership, insert version
-                        let _ = sqlite_exec_p(db,
-                          "INSERT OR IGNORE INTO packages(name, description, repository, license) " +
-                          "VALUES (?, ?, ?, ?)",
-                          [param(name), param(desc), param(repo), param(lic)])
-                        // First publisher becomes the initial owner (INSERT OR IGNORE
-                        // is a no-op if ownership already exists for this package).
-                        let _ = sqlite_exec_p(db,
-                          "INSERT OR IGNORE INTO package_owners(package_id, user_id) " +
-                          "SELECT p.id, ? FROM packages p " +
-                          "WHERE p.name = ? " +
-                          "AND NOT EXISTS (SELECT 1 FROM package_owners po WHERE po.package_id = p.id)",
-                          [param(show(user_id)), param(name)])
-                        // For an existing package, verify the caller is an owner.
-                        match sqlite_query_p(db,
-                                "SELECT 1 FROM package_owners po " +
-                                "JOIN packages p ON p.id = po.package_id " +
-                                "WHERE p.name = ? AND po.user_id = ?",
-                                [param(name), param(show(user_id))]) {
-                          Err(e) => error_response(e.message),
-                          Ok(ores) => match ores.rows {
-                            [] => forbidden("not an owner of '" + name + "'"),
-                            [_, .._] =>
-                              match sqlite_exec_p(db,
-                                  "INSERT INTO versions(package_id, version, checksum, tarball_path, published_by) " +
-                                  "VALUES ((SELECT id FROM packages WHERE name = ?), ?, ?, ?, ?)",
-                                  [param(name), param(ver), param(actual_sum),
-                                   param(tpath), param(show(user_id))]) {
-                                Err(e) => status_response(409,
-                                  "could not publish " + name + "@" + ver +
-                                  " (already exists?): " + e.message),
-                                Ok(_) => json_response(json_emit(JObject([
-                                  ("ok",            JBool(true)),
-                                  ("package",       JString(name)),
-                                  ("version",       JString(ver)),
-                                  ("checksum",      JString(actual_sum)),
-                                  ("tarball_path",  JString(tpath)),
-                                  ("tarball_bytes", JInt(str_length(tar.bytes)))
-                                ])))
-                              }
+
+              // Validate ownership first!
+              match sqlite_query_p(db,
+                      "SELECT 1 FROM package_owners po " +
+                      "JOIN packages p ON p.id = po.package_id " +
+                      "WHERE p.name = ? AND po.user_id = ?",
+                      [param(name), param(show(user_id))]) {
+                Err(e) => error_response(e.message),
+                Ok(ores) => {
+                  let is_owner = match ores.rows {
+                    [] => {
+                      match sqlite_query_p(db, "SELECT 1 FROM packages WHERE name = ?", [param(name)]) {
+                        Ok(p_res) => match p_res.rows {
+                          [] => true,
+                          _ => false
+                        },
+                        Err(_) => false
+                      }
+                    },
+                    _ => true
+                  }
+                  if !is_owner {
+                    forbidden("not an owner of '" + name + "'")
+                  } else {
+                    // Check if we are doing cooperative background publish or synchronous fallback
+                    match on_publish {
+                      Some(cb) => {
+                        cb(name, ver, desc, repo, lic, claimed, tar.bytes, user_id)
+                        accepted("\{\"status\": \"queued\", \"package\": \"" + name + "\", \"version\": \"" + ver + "\"\}")
+                      },
+                      None => {
+                        let tdir  = match get_env("HICA_TARBALL_DIR") {
+                          Some(d) => d,
+                          None    => "./tarballs"
+                        }
+                        let pkg_dir = tdir + "/" + name
+                        let tpath   = pkg_dir + "/" + name + "-" + ver + ".tar.gz"
+                        match exec("mkdir -p " + pkg_dir) {
+                          Err(e) => status_response(500, "could not create tarball dir: " + e),
+                          Ok(_) => {
+                            write_file(tpath, tar.bytes)
+                            match sha256_file(tpath) {
+                              Err(e) => status_response(500, "sha256 failed: " + e),
+                              Ok(actual_sum) =>
+                                if claimed != "" && claimed != actual_sum {
+                                  status_response(400, "checksum mismatch: declared " + claimed + " but computed " + actual_sum)
+                                } else {
+                                  let _ = sqlite_exec_p(db,
+                                    "INSERT OR IGNORE INTO packages(name, description, repository, license) " +
+                                    "VALUES (?, ?, ?, ?)",
+                                    [param(name), param(desc), param(repo), param(lic)])
+                                  let _ = sqlite_exec_p(db,
+                                    "INSERT OR IGNORE INTO package_owners(package_id, user_id) " +
+                                    "SELECT p.id, ? FROM packages p " +
+                                    "WHERE p.name = ? " +
+                                    "AND NOT EXISTS (SELECT 1 FROM package_owners po WHERE po.package_id = p.id)",
+                                    [param(show(user_id)), param(name)])
+                                  match sqlite_exec_p(db,
+                                      "INSERT INTO versions(package_id, version, checksum, tarball_path, published_by) " +
+                                      "VALUES ((SELECT id FROM packages WHERE name = ?), ?, ?, ?, ?)",
+                                      [param(name), param(ver), param(actual_sum), param(tpath), param(show(user_id))]) {
+                                    Err(e) => status_response(409, "could not publish " + name + "@" + ver + " (already exists?): " + e.message),
+                                    Ok(_) => json_response(json_emit(JObject([
+                                      ("ok",            JBool(true)),
+                                      ("package",       JString(name)),
+                                      ("version",       JString(ver)),
+                                      ("checksum",      JString(actual_sum)),
+                                      ("tarball_path",  JString(tpath)),
+                                      ("tarball_bytes", JInt(str_length(tar.bytes)))
+                                    ])))
+                                  }
+                                }
+                            }
                           }
                         }
                       }
+                    }
                   }
                 }
               }
@@ -713,6 +725,10 @@ pub fun handle_hica_download(db, req) {
 // Build the registry's route table over an open database handle. Shared by the
 // server (main.hc) and the in-process tests.
 pub fun build_routes(db) {
+  build_routes_cooperative(db, None)
+}
+
+pub fun build_routes_cooperative(db, on_publish) {
   [
     get("/health",                                              (req) => handle_health(db, req)),
     get("/api/v1/index",                                        (req) => handle_index(db, req)),
@@ -724,7 +740,7 @@ pub fun build_routes(db) {
     delete("/api/v1/packages/\{name\}/owners",                   (req) => handle_remove_owner(db, req)),
     get("/api/v1/packages/\{name\}/\{version\}/download",        (req) => handle_download(db, req)),
     get("/api/v1/packages/\{name\}/\{version\}",                 (req) => handle_get_version(db, req)),
-    put("/api/v1/packages/\{name\}/\{version\}",                 (req) => handle_publish(db, req)),
+    put("/api/v1/packages/\{name\}/\{version\}",                 (req) => handle_publish(db, req, on_publish)),
     delete("/api/v1/packages/\{name\}/\{version\}/yank",         (req) => handle_yank(db, req)),
     put("/api/v1/packages/\{name\}/\{version\}/unyank",          (req) => handle_unyank(db, req)),
     get("/api/v1/hica/downloads",                                (req) => handle_hica_downloads(db, req)),
