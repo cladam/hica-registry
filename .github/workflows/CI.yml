@@ -58,6 +58,11 @@ jobs:
           fi
           exit $failed
 
+      - name: Run integration tests
+        run: |
+          chmod +x tests/integration_test.sh
+          ./tests/integration_test.sh
+
   docker:
     name: Build Docker image and smoke test
     needs: test

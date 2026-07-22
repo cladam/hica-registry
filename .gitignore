@@ -6,6 +6,8 @@
 .hica/*.kk
 .hica/*.kki
 
+local
+
 examples/*
 !examples/*.hc
 
@@ -16,8 +18,11 @@ src/*
 
 tests/*
 !tests/*.hc
+!tests/*.sh
 
 registry.*
+test_reg.db-shm
+test_reg.db-wal
 
 # tbdflow intent log (local-only, never committed)
 .tbdflow-intent.json
