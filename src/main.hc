@@ -29,10 +29,11 @@ import "sqlite"
 import "std/actor"
 import "./db"
 import "./routes"
+import "./auth"
 
 type TarballWorkerMsg {
   PublishTask(
-    db: db,
+    db: Db,
     name: string,
     ver: string,
     desc: string,
@@ -90,8 +91,18 @@ actor TarballWorker {
   }
 }
 
+fun on_publish(db: Db, name: string, ver: string, desc: string, repo: string, lic: string, claimed: string, tar_bytes: string, user_id: int) {
+  let _ = sqlite_exec_p(db,
+    "INSERT INTO pending_tasks(name, version, desc, repo, license, claimed, tar_bytes, user_id) " +
+    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    [param(name), param(ver), param(desc), param(repo), param(lic), param(claimed), param(tar_bytes), param(show(user_id))])
+}
+
 fun main() {
-  let db_path = env_or("HICA_DB_PATH", "registry.db")
+  let db_path = match get_env("HICA_DB_PATH") {
+    Some(p) => p,
+    None    => "registry.db"
+  }
   match sqlite_open(db_path) {
     Err(e) => println("failed to open database: " + e.message),
     Ok(db) => {
@@ -100,37 +111,47 @@ fun main() {
       seed_admin_token(db)
       println("hica-registry listening on http://localhost:8080 (Cooperative Mode)")
 
-      var pending_tasks = []
-      let get_tasks = () => { pending_tasks }
-      let set_tasks = (t) => { pending_tasks = t }
-
-      let on_publish = (name, ver, desc, repo, lic, claimed, tar_bytes, user_id) => {
-        let task = PublishTask(db, name, ver, desc, repo, lic, claimed, tar_bytes, user_id)
-        pending_tasks = pending_tasks + [task]
-      }
-
       let srv = http_server_init(8080, (node) => {
         let raw = request_from_id(node)
-        let resp = dispatch_routes_safe(raw, build_routes(db, Some(on_publish)))
+        let on_pub = (name, ver, desc, repo, lic, claimed, tar_bytes, user_id) => {
+          on_publish(db, name, ver, desc, repo, lic, claimed, tar_bytes, user_id)
+        }
+        let resp = dispatch_routes_safe(raw, build_routes_cooperative(db, Some(on_pub)))
         http_set_response(node, route_response_status(resp), route_response_headers(resp), route_response_body(resp))
       })
 
-      var worker_state = TarballWorkerState { dummy: 0 }
-      run_loop(srv, get_tasks, set_tasks, worker_state)
+      let worker_state = TarballWorkerState { dummy: 0 }
+      run_loop(srv, db, worker_state)
     }
   }
 }
 
-fun run_loop(srv: int, get_tasks, set_tasks, worker: TarballWorkerState) : () {
+fun run_loop(srv: int, db: Db, worker: TarballWorkerState) : () {
   let _ = server_poll(srv)
-  let tasks = get_tasks()
-  var next_worker = worker
-  match tasks {
-    [] => ()
-    [task, ..rest] => {
-      set_tasks(rest)
-      next_worker = tarballworker_receive(worker, task)
+  let next_worker = match sqlite_query_p(db, "SELECT id, name, version, desc, repo, license, claimed, tar_bytes, user_id FROM pending_tasks ORDER BY id LIMIT 1", []) {
+    Err(_) => worker,
+    Ok(res) => match res.rows {
+      [] => worker,
+      [row, ..] => {
+        let tid       = iopt(row_int(row, 0))
+        let name      = sopt(row_str(row, 1))
+        let ver       = sopt(row_str(row, 2))
+        let desc      = sopt(row_str(row, 3))
+        let repo      = sopt(row_str(row, 4))
+        let lic       = sopt(row_str(row, 5))
+        let claimed   = sopt(row_str(row, 6))
+        let tar_bytes = sopt(row_str(row, 7))
+        let user_id   = iopt(row_int(row, 8))
+
+        // Process the task
+        let task = PublishTask(db, name, ver, desc, repo, lic, claimed, tar_bytes, user_id)
+        let w = tarballworker_receive(worker, task)
+
+        // Delete from queue
+        let _ = sqlite_exec_p(db, "DELETE FROM pending_tasks WHERE id = ?", [param(show(tid))])
+        w
+      }
     }
   }
-  run_loop(srv, get_tasks, set_tasks, next_worker)
+  run_loop(srv, db, next_worker)
 }

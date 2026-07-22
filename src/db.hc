@@ -69,6 +69,17 @@ pub fun schema_sql() : string {
   "  arch    TEXT NOT NULL DEFAULT ''," +
   "  count   INTEGER NOT NULL DEFAULT 0," +
   "  UNIQUE(version, os, arch)" +
+  ");" +
+  "CREATE TABLE IF NOT EXISTS pending_tasks (" +
+  "  id        INTEGER PRIMARY KEY," +
+  "  name      TEXT NOT NULL," +
+  "  version   TEXT NOT NULL," +
+  "  desc      TEXT NOT NULL," +
+  "  repo      TEXT NOT NULL," +
+  "  license   TEXT NOT NULL," +
+  "  claimed   TEXT NOT NULL," +
+  "  tar_bytes TEXT NOT NULL," +
+  "  user_id   INTEGER NOT NULL" +
   ");"
 }
 
@@ -113,6 +124,18 @@ pub fun upgrade_db(db) {
     "  arch    TEXT NOT NULL DEFAULT ''," +
     "  count   INTEGER NOT NULL DEFAULT 0," +
     "  UNIQUE(version, os, arch)" +
+    ")")
+  let _ = sqlite_exec(db,
+    "CREATE TABLE IF NOT EXISTS pending_tasks (" +
+    "  id        INTEGER PRIMARY KEY," +
+    "  name      TEXT NOT NULL," +
+    "  version   TEXT NOT NULL," +
+    "  desc      TEXT NOT NULL," +
+    "  repo      TEXT NOT NULL," +
+    "  license   TEXT NOT NULL," +
+    "  claimed   TEXT NOT NULL," +
+    "  tar_bytes TEXT NOT NULL," +
+    "  user_id   INTEGER NOT NULL" +
     ")")
   println("schema upgrade done")
 }

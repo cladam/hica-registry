@@ -98,11 +98,11 @@ hica fmt     # format according to hica style guide
 hica check   # type-check without emitting
 hica clean   # remove generated files
 
-# test suites (59 tests total)
+# test suites (73 tests total)
 hica test tests/test_db.hc        # db helpers, schema, auth primitives (10)
-hica test tests/test_read.hc      # read-only GET routes              (13)
+hica test tests/test_read.hc      # read-only GET routes              (26)
 hica test tests/test_publish.hc   # authenticated publish              ( 5)
-hica test tests/test_downloads.hc # download counter                   ( 4)
+hica test tests/test_downloads.hc # download counter                   (10)
 hica test tests/test_yank.hc      # yank / unyank                     (10)
 hica test tests/test_owners.hc    # owners API                        (17)
 ```
